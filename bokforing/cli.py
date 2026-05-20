@@ -82,7 +82,7 @@ def init(year, from_sie, output):
         sys.exit(1)
 
     prev = sie_module.parse(from_sie)
-    new_sie = init_from_previous(prev, f'{year}0101', f'{year}1231')
+    new_sie, source = init_from_previous(prev, f'{year}0101', f'{year}1231')
 
     if output is None:
         output = f'ledger_{year}.se'
@@ -93,11 +93,25 @@ def init(year, from_sie, output):
             return
 
     sie_module.write(output, new_sie)
+
+    # Summarise the opening balance sheet
+    assets = sum(v for k, v in new_sie.ib.items()
+                 if k.isdigit() and int(k) < 2000)
+    equity = sum(v for k, v in new_sie.ib.items()
+                 if k.isdigit() and 2000 <= int(k) < 3000)
+    diff = assets + equity
+
     click.echo(f'Created {output}')
-    click.echo(f'  Period : {year}-01-01 – {year}-12-31')
-    click.echo(f'  Company: {new_sie.company_name}  ({new_sie.org_nr})')
-    click.echo(f'  Opening balances carried from: {from_sie}')
-    click.echo(f'  {len(new_sie.ib)} IB entries, {len(new_sie.accounts)} accounts')
+    click.echo(f'  Company : {new_sie.company_name}  ({new_sie.org_nr})')
+    click.echo(f'  Period  : {year}-01-01 – {year}-12-31')
+    click.echo(f'  Source  : {from_sie}  ({source})')
+    click.echo(f'  Accounts: {len(new_sie.accounts)}  |  IB entries: {len(new_sie.ib)}')
+    click.echo(f'')
+    click.echo(f'  {"Assets (1xxx)":<30} {assets:>14,.2f}')
+    click.echo(f'  {"Equity/liabilities (2xxx)":<30} {equity:>14,.2f}')
+    color = 'green' if diff == 0 else 'red'
+    label = 'Balanced ✓' if diff == 0 else f'Difference: {diff:+,.2f}  (!)'
+    click.echo(click.style(f'  {label}', fg=color))
 
 
 # ─── add ─────────────────────────────────────────────────────────────────────

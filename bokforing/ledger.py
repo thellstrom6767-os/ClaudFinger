@@ -43,9 +43,31 @@ def find_account(sie: SIEFile, query: str) -> Account | None:
     return None
 
 
-def init_from_previous(prev: SIEFile, new_begins: str, new_ends: str) -> SIEFile:
-    """Create a new-year SIEFile carrying forward closing balances as opening balances."""
-    return SIEFile(
+def closing_balances(prev: SIEFile) -> tuple[dict[str, Decimal], str]:
+    """Return (balance_sheet_closing_balances, source_description).
+
+    Uses #UB entries when the year is closed; otherwise computes from
+    IB + transactions. Only returns balance-sheet accounts (1xxx, 2xxx).
+    """
+    if prev.ub:
+        raw = prev.ub
+        source = '#UB entries (closed year)'
+    else:
+        raw = get_balances(prev)
+        source = 'computed from IB + transactions (open year)'
+
+    bs = {k: v for k, v in raw.items()
+          if k.isdigit() and int(k) < 3000 and v != Decimal('0')}
+    return bs, source
+
+
+def init_from_previous(prev: SIEFile, new_begins: str, new_ends: str) -> tuple[SIEFile, str]:
+    """Create a new-year SIEFile carrying forward closing balances as opening balances.
+
+    Returns (new_sie, source_description).
+    """
+    ib, source = closing_balances(prev)
+    new_sie = SIEFile(
         program=PROGRAM_NAME,
         program_version=PROGRAM_VERSION,
         gen_date=date.today().strftime('%Y%m%d'),
@@ -60,5 +82,6 @@ def init_from_previous(prev: SIEFile, new_begins: str, new_ends: str) -> SIEFile
         year_ends=new_ends,
         currency=prev.currency,
         accounts=list(prev.accounts),
-        ib=dict(prev.ub),   # previous year's closing = new year's opening
+        ib=ib,
     )
+    return new_sie, source
