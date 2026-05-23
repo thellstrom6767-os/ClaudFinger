@@ -340,6 +340,50 @@ SRU codes are important, retain the original ``.se`` file or regenerate
 them from a reference chart.
 
 
+Sorting and Renumbering
+-----------------------
+
+The ``sort`` command is the only operation that rewrites the ledger file
+in full.  It is intended as a one-time sanitise step for ledgers that
+were built retrospectively with backdated vouchers in non-chronological
+order.
+
+**Sort key options**
+
+``registration-date``
+  Orders vouchers by when they were entered into the system.  Useful
+  when bookkeeping was done after the fact: the registration dates
+  reflect the actual entry sequence even if the voucher dates are
+  spread across the fiscal year.
+
+``voucher-date``
+  Orders vouchers by the economic date of the transaction.
+
+**Renumbering**
+
+After sorting, vouchers within each series are renumbered 1, 2, 3, …
+The underlying transaction amounts, dates, labels, and signatures are
+not altered.
+
+**Underlag renaming**
+
+Because voucher numbers change, any underlag files must be renamed to
+stay linked to the correct vouchers.  The ``renumber_vouchers`` function
+in ``underlag.py`` performs a two-pass rename to avoid collisions when
+old and new numbers overlap:
+
+1. All affected files are renamed to ``__sort_tmp_{db_id}.ext``.
+2. The SQLite rows are updated with the new ``(series, number)`` values.
+3. Files are renamed from the temp names to their final
+   ``Verifikation_A{n}[…]`` form via ``_rename_to_reflect_total``.
+
+**Integrity**
+
+``sort`` calls ``sie.write()`` which rewrites all sections (header,
+accounts, balances, vouchers).  Run ``verify`` after sorting to confirm
+all vouchers still balance.
+
+
 Changing the Accounting Year
 -----------------------------
 
@@ -422,6 +466,10 @@ There is no facility to edit or delete a voucher in place.  The raw
 ``.se`` file is a text file and can technically be edited with any text
 editor, but doing so outside the application breaks the append-only
 contract and may introduce encoding or formatting errors.
+
+The one intentional exception to the append-only rule is the ``sort``
+command, which rewrites the entire file in order to renumber vouchers.
+See *Sorting and renumbering* below.
 
 Changing the fiscal year period
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

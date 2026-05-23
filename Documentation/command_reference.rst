@@ -175,6 +175,70 @@ An unbalanced voucher (transactions not summing to zero) will trigger a
 warning and a confirmation prompt before saving.  Unbalanced vouchers
 are permitted but will fail the ``verify`` check.
 
+sort
+~~~~
+
+Sort and renumber vouchers within each series, then rename any
+attached underlag files to match the new numbers.
+
+.. code-block:: text
+
+   Usage: main.py sort [OPTIONS]
+
+.. option:: --by [registration-date|voucher-date]
+
+   The date field to sort by.  Default: ``registration-date``.
+
+   ``registration-date``
+     The date the entry was made in the accounting system.  Produces a
+     ledger ordered by when transactions were recorded, which is useful
+     when books were kept retrospectively and entries are backdated.
+
+   ``voucher-date``
+     The economic date of the transaction (invoice date, payment date,
+     etc.).  Produces a ledger ordered by when events actually occurred.
+
+.. option:: --dry-run
+
+   Print the proposed renumbering table without writing any changes.
+   Use this first to review what will move before committing.
+
+**Behaviour**
+
+Within each voucher series, vouchers are sorted by the chosen date
+(stable sort — vouchers with the same date retain their relative
+order).  They are then renumbered 1, 2, 3, … from the beginning of
+the series.  Finally, any underlag files linked to moved vouchers are
+renamed using a collision-safe two-pass strategy:
+
+1. All affected files are first renamed to temporary names
+   (``__sort_tmp_{id}.ext``) so that old and new numbers can freely
+   overlap.
+2. Files are renamed from the temporary names to their final
+   ``Verifikation_A{n}[…]`` names, and the SQLite index is updated.
+
+.. warning::
+
+   ``sort`` rewrites the ledger file in full.  This is a one-time
+   sanitise operation and intentionally breaks the normal append-only
+   contract.  Run ``verify`` afterwards to confirm integrity.
+
+**Example**
+
+.. code-block:: bash
+
+   # Preview
+   python main.py sort --dry-run
+
+   # Apply (prompts for confirmation)
+   python main.py sort
+
+   # Sort by transaction date instead
+   python main.py sort --by voucher-date
+
+   # Verify nothing broke
+   python main.py verify
+
 verify
 ~~~~~~
 

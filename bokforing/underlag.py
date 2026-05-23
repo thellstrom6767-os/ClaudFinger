@@ -166,3 +166,63 @@ def file_path(ledger_path: str, file_id: int) -> str | None:
         return None
     underlag_dir, _ = _paths(ledger_path)
     return os.path.join(underlag_dir, row[0])
+
+
+def renumber_vouchers(
+    ledger_path: str,
+    renumber_map: dict[tuple[str, int], tuple[str, int]],
+) -> int:
+    """Rename underlag files to reflect new voucher numbers after a sort.
+
+    Uses a two-pass rename to avoid conflicts when old and new numbers
+    overlap (e.g. old A:3 → A:5 while old A:5 → A:3):
+
+      Pass 1 — rename every affected file to a collision-free temp name
+               (``__sort_tmp_{db_id}.ext``).
+      Pass 2 — rename from temp names to final Verifikation names,
+               respecting the [1avN] multi-file convention.
+
+    Returns the number of files renamed.
+    """
+    if not renumber_map:
+        return 0
+
+    underlag_dir, _ = _paths(ledger_path)
+    conn = _connect(ledger_path)
+    try:
+        rows = conn.execute(
+            'SELECT id, series, number, filename FROM underlag ORDER BY id'
+        ).fetchall()
+
+        affected = [
+            (row_id, series, number, filename)
+            for row_id, series, number, filename in rows
+            if (series, number) in renumber_map
+        ]
+        if not affected:
+            return 0
+
+        # Pass 1: rename to temp names and update DB with new (series, number)
+        for row_id, series, number, filename in affected:
+            ext = Path(filename).suffix
+            tmp_name = f'__sort_tmp_{row_id}{ext}'
+            old_path = os.path.join(underlag_dir, filename)
+            tmp_path = os.path.join(underlag_dir, tmp_name)
+            if os.path.exists(old_path):
+                os.rename(old_path, tmp_path)
+            new_series, new_number = renumber_map[(series, number)]
+            conn.execute(
+                'UPDATE underlag SET filename=?, series=?, number=? WHERE id=?',
+                (tmp_name, new_series, new_number, row_id),
+            )
+        conn.commit()
+
+        # Pass 2: rename from temp names to final Verifikation names
+        updated_vouchers = set(renumber_map.values())
+        for new_series, new_number in sorted(updated_vouchers):
+            _rename_to_reflect_total(underlag_dir, conn, new_series, new_number)
+        conn.commit()
+
+        return len(affected)
+    finally:
+        conn.close()

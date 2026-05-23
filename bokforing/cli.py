@@ -14,7 +14,7 @@ from .reports import generate_balansrapport, generate_resultatrapport
 
 from . import sie as sie_module
 from .ledger import (find_account, get_account_history, get_balances,
-                     init_from_previous, next_voucher_number)
+                     init_from_previous, next_voucher_number, sort_vouchers)
 from .models import Transaction, Voucher
 
 
@@ -359,6 +359,68 @@ def verify(ctx):
     else:
         click.echo(click.style(
             f'All {len(sie.vouchers)} vouchers in {path} balance. ✓', fg='green'))
+
+
+# ─── sort ────────────────────────────────────────────────────────────────────
+
+@cli.command('sort')
+@click.option('--by', 'sort_by',
+              type=click.Choice(['registration-date', 'voucher-date'],
+                                case_sensitive=False),
+              default='registration-date', show_default=True,
+              help='Date field to sort by within each series.')
+@click.option('--dry-run', is_flag=True,
+              help='Show what would change without writing anything.')
+@click.pass_context
+def sort_cmd(ctx, sort_by, dry_run):
+    """Sort and renumber vouchers within each series, rename underlag files.
+
+    Vouchers are sorted by the chosen date and renumbered 1, 2, 3, …
+    Underlag files are renamed to match the new numbers using a
+    collision-safe two-pass rename.  The ledger file is rewritten in full.
+
+    This is a one-time sanitise operation; normal voucher entry is
+    append-only and never renumbers existing vouchers.
+    """
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+
+    key = 'reg_date' if sort_by == 'registration-date' else 'date'
+    new_sie, renumber_map = sort_vouchers(sie, key=key)
+
+    if not renumber_map:
+        click.echo('Vouchers are already in order — nothing to do.')
+        return
+
+    click.echo(f'Sort by {sort_by} — {len(renumber_map)} voucher(s) will be renumbered:\n')
+    click.echo(f'  {"Old":<8}  {"New":<8}  {"Reg date":10}  {"Voucher date":12}  Description')
+    click.echo('  ' + '─' * 72)
+    for (old_s, old_n), (new_s, new_n) in sorted(renumber_map.items()):
+        v = next((v for v in sie.vouchers
+                  if v.series == old_s and v.number == old_n), None)
+        reg  = _fmt_date(v.reg_date)  if v and v.reg_date  else '—'
+        vdat = _fmt_date(v.date)      if v and v.date       else '—'
+        lbl  = (v.label[:35])         if v                  else ''
+        click.echo(f'  {old_s}:{old_n:<6}  {new_s}:{new_n:<6}  {reg:10}  {vdat:12}  {lbl}')
+
+    if dry_run:
+        click.echo('\nDry run — no changes written.')
+        return
+
+    click.echo()
+    if not click.confirm(f'Rewrite {os.path.basename(path)} and rename underlag?',
+                         default=True):
+        click.echo('Aborted.')
+        return
+
+    sie_module.write(path, new_sie)
+
+    n_files = underlag_module.renumber_vouchers(path, renumber_map)
+
+    click.echo(f'Done.')
+    click.echo(f'  {len(renumber_map)} vouchers renumbered')
+    if n_files:
+        click.echo(f'  {n_files} underlag file(s) renamed')
 
 
 # ─── report ──────────────────────────────────────────────────────────────────
