@@ -42,6 +42,113 @@ Global options
 
 ----
 
+AI-Assisted Voucher Entry
+--------------------------
+
+scan
+~~~~
+
+Analyse a receipt or invoice file with Claude AI and create a voucher
+with mandatory operator sign-off before saving.
+
+.. code-block:: text
+
+   Usage: main.py scan [OPTIONS] FILE
+
+.. option:: FILE
+
+   Path to the document to analyse.  Supported formats: PDF, JPEG,
+   PNG, TIFF.
+
+.. option:: --attach / --no-attach
+
+   Attach the analysed file as underlag for the created voucher.
+   Default: ``--attach``.
+
+.. option:: --series TEXT
+
+   Voucher series letter.  Default: ``A``.
+
+**Prerequisites**
+
+Set the ``ANTHROPIC_API_KEY`` environment variable before use:
+
+.. code-block:: bash
+
+   export ANTHROPIC_API_KEY=sk-ant-…
+
+**What Claude receives**
+
+* The document (base64-encoded).
+* The chart of accounts filtered to the operationally relevant ranges
+  (income, expense, VAT, bank/cash accounts).
+* The last 5 vouchers for pattern recognition.
+* The company name, org nr, and fiscal year.
+* The SIE sign convention and Swedish VAT rates.
+
+**What Claude returns** (via tool use — structured, not free text)
+
+* ``date`` — extracted from the document (not today's date).
+* ``description`` — vendor name and purpose.
+* ``confidence`` — ``high``, ``medium``, or ``low``.
+* ``transactions`` — balanced double-entry lines, amounts summing to zero.
+* ``notes`` — explanation of VAT rate applied and any assumptions.
+
+**Sign-off flow**
+
+After analysis the suggestion is displayed:
+
+.. code-block:: text
+
+   ────────────────────────────────────────────────────────────
+     Date:         2024-02-15
+     Description:  Mobilräkning Tre
+
+     6210        800.00  Telekommunikation
+     2640        200.00  Ingående moms  (Ingående moms 25%)
+     1941      -1000.00  Affärskonto Handelsbanken
+     ──────────────────────────────────────────
+     Balance: 0.00 ✓
+
+     Notes: Mobile invoice 2024-02-15. 25% VAT applied to account 6210.
+
+     Confidence: high
+   ────────────────────────────────────────────────────────────
+
+   [a]ccept  [e]dit  [d]iscard  Choice:
+
+Three choices are offered at every review step:
+
+``a`` (accept)
+  Saves the voucher immediately.  Only permitted when the balance is
+  exactly zero; otherwise you are redirected to edit.
+
+``e`` (edit)
+  Opens an interactive editor pre-filled with the AI suggestion.
+  Every field (date, description, account, amount, label) can be
+  overridden.  Extra transaction lines can be added.  The suggestion
+  is redisplayed after editing for a second review pass.
+
+``d`` (discard)
+  Exits without saving anything.  The original file is not moved.
+
+.. note::
+
+   The ``scan`` command **never saves a voucher without an explicit
+   'a' confirmation from the operator**.  An unbalanced suggestion
+   cannot be accepted; the operator must edit it to balance first.
+
+**Example**
+
+.. code-block:: bash
+
+   python main.py scan receipt.pdf
+   python main.py scan invoice.pdf --no-attach    # don't store as underlag
+   python main.py scan bank_statement.pdf --series B
+
+
+----
+
 Ledger Initialisation
 ---------------------
 

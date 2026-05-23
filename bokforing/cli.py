@@ -361,6 +361,208 @@ def verify(ctx):
             f'All {len(sie.vouchers)} vouchers in {path} balance. ✓', fg='green'))
 
 
+# ─── scan ────────────────────────────────────────────────────────────────────
+
+def _display_suggestion(suggestion: dict, account_map: dict, sie) -> None:
+    """Print the AI suggestion in a readable format."""
+    from decimal import Decimal as D
+    conf_color = {'high': 'green', 'medium': 'yellow', 'low': 'red'}.get(
+        suggestion.get('confidence', 'low'), 'white')
+
+    click.echo(f'\n{"─" * 60}')
+    click.echo(f'  Date:         {_fmt_date(suggestion.get("date", ""))}')
+    click.echo(f'  Description:  {suggestion.get("description", "")}')
+    click.echo()
+
+    txns = suggestion.get('transactions', [])
+    total = sum(t.get('amount', D('0')) for t in txns)
+    for t in txns:
+        name = account_map.get(t['account'], type('', (), {'label': ''})()).label
+        lbl  = f'  ({t["label"]})' if t.get('label') else ''
+        click.echo(f'  {t["account"]}  {t["amount"]:>12.2f}  {name}{lbl}')
+
+    click.echo(f'  {"─" * 42}')
+    bal_color = 'green' if total == 0 else 'red'
+    click.echo(click.style(f'  Balance: {total:.2f}', fg=bal_color) +
+               (' ✓' if total == 0 else '  (!)')   )
+
+    if suggestion.get('notes'):
+        click.echo()
+        click.echo(f'  Notes: {suggestion["notes"]}')
+
+    click.echo(
+        click.style(
+            f'\n  Confidence: {suggestion.get("confidence", "?")}',
+            fg=conf_color,
+        )
+    )
+    click.echo(f'{"─" * 60}')
+
+
+def _edit_suggestion(suggestion: dict, sie, vdate: str, label: str,
+                     transactions: list) -> tuple[str, str, list]:
+    """Interactive editor pre-filled with the AI suggestion."""
+    from decimal import Decimal, InvalidOperation as _IE
+
+    click.echo('\nEdit voucher (press Enter to accept suggestion):')
+
+    new_date = click.prompt('Date (YYYYMMDD)', default=vdate)
+    new_label = click.prompt('Description', default=label)
+
+    new_txns = []
+    running = Decimal('0')
+
+    click.echo('Transactions (empty account to finish, then add lines if needed):')
+    # Pre-fill with suggested lines
+    for t in transactions:
+        acc_in = click.prompt(
+            f'  Account', default=t['account'], show_default=True)
+        if not acc_in.strip():
+            break
+        acc = find_account(sie, acc_in) or type('', (), {'number': acc_in, 'label': ''})()
+        acct_nr = acc.number if hasattr(acc, 'number') else acc_in
+        while True:
+            raw = click.prompt('  Amount',
+                               default=f'{t["amount"]:.2f}',
+                               show_default=True).replace(',', '.')
+            try:
+                amount = Decimal(raw); break
+            except _IE:
+                click.echo('  Invalid amount.')
+        lbl = click.prompt('  Label', default=t.get('label', ''), show_default=False)
+        new_txns.append({'account': acct_nr, 'amount': amount, 'label': lbl})
+        running += amount
+        color = 'green' if running == 0 else 'yellow'
+        click.echo(click.style(f'  Running balance: {running:+.2f}', fg=color))
+
+    # Allow adding extra lines
+    while True:
+        if running == 0:
+            break
+        click.echo(click.style(f'  Running balance: {running:+.2f}', fg='yellow'))
+        acc_in = click.prompt('  Account (empty to finish)', default='',
+                              show_default=False).strip()
+        if not acc_in:
+            break
+        acc = find_account(sie, acc_in) or type('', (), {'number': acc_in, 'label': ''})()
+        acct_nr = acc.number if hasattr(acc, 'number') else acc_in
+        while True:
+            raw = click.prompt('  Amount').replace(',', '.')
+            try:
+                amount = Decimal(raw); break
+            except _IE:
+                click.echo('  Invalid amount.')
+        lbl = click.prompt('  Label', default='', show_default=False)
+        new_txns.append({'account': acct_nr, 'amount': amount, 'label': lbl})
+        running += amount
+
+    return new_date, new_label, new_txns
+
+
+@cli.command('scan')
+@click.argument('file', type=click.Path(exists=True))
+@click.option('--attach/--no-attach', default=True, show_default=True,
+              help='Attach the file as underlag after saving the voucher.')
+@click.option('--series', default='A', show_default=True,
+              help='Voucher series to use.')
+@click.pass_context
+def scan(ctx, file, attach, series):
+    """Analyse a receipt or invoice with AI and create a voucher.
+
+    Sends the file to Claude, which reads the document and suggests date,
+    description, and double-entry transactions.  The suggestion is displayed
+    for review; you must explicitly accept or edit it before anything is saved.
+
+    Requires ANTHROPIC_API_KEY to be set in the environment.
+    """
+    from .ai import suggest_voucher as _suggest
+    from decimal import Decimal
+
+    path = ctx.obj.get('ledger') if ctx.obj else None
+    path = path or _resolve_ledger(ctx.obj)
+    sie  = sie_module.parse(path)
+    account_map = sie.account_map()
+
+    click.echo(f'Analysing {os.path.basename(file)} …')
+    try:
+        suggestion = _suggest(file, sie)
+    except EnvironmentError as e:
+        click.echo(click.style(str(e), fg='red'), err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(click.style(f'Analysis failed: {e}', fg='red'), err=True)
+        sys.exit(1)
+
+    vdate  = suggestion.get('date', _today())
+    label  = suggestion.get('description', '')
+    txns   = suggestion.get('transactions', [])
+
+    _display_suggestion(suggestion, account_map, sie)
+
+    # ── Sign-off loop ────────────────────────────────────────────────────
+    while True:
+        click.echo()
+        choice = click.prompt(
+            '[a]ccept  [e]dit  [d]iscard',
+            default='a',
+            prompt_suffix='  Choice',
+        ).strip().lower()
+
+        if choice == 'd':
+            click.echo('Discarded.')
+            return
+
+        if choice == 'e':
+            vdate, label, txns = _edit_suggestion(
+                suggestion, sie, vdate, label, txns)
+            # Rebuild display after editing
+            suggestion = {**suggestion,
+                          'date': vdate,
+                          'description': label,
+                          'transactions': txns,
+                          'confidence': suggestion.get('confidence', '?')}
+            _display_suggestion(suggestion, account_map, sie)
+            continue
+
+        if choice == 'a':
+            total = sum(t.get('amount', Decimal('0')) for t in txns)
+            if total != 0:
+                click.echo(click.style(
+                    f'Voucher does not balance (off by {total:+.2f}). '
+                    'Edit before accepting.', fg='red'))
+                continue
+            break
+
+        click.echo("Please enter 'a', 'e', or 'd'.")
+
+    # ── Save ─────────────────────────────────────────────────────────────
+    from .models import Voucher, Transaction
+    num = next_voucher_number(sie, series)
+    voucher = Voucher(
+        series=series,
+        number=num,
+        date=vdate,
+        label=label,
+        reg_date=_today(),
+        signature='',
+        transactions=[
+            Transaction(
+                account=t['account'],
+                amount=t['amount'],
+                date=vdate,
+                label=t.get('label', ''),
+            )
+            for t in txns
+        ],
+    )
+    sie_module.append_voucher(path, voucher)
+    click.echo(f'Saved as {series}:{num} in {os.path.basename(path)}')
+
+    if attach:
+        stored = underlag_module.add_file(path, series, num, file)
+        click.echo(f'Underlag attached: {stored}')
+
+
 # ─── sort ────────────────────────────────────────────────────────────────────
 
 @cli.command('sort')
