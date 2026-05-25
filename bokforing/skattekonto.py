@@ -165,6 +165,7 @@ def suggest_vouchers(
     transactions: list[dict],
     sie: SIEFile,
     opening_balance: Decimal,
+    samples: list[dict] | None = None,
 ) -> list[dict]:
     """Send all transactions to Claude and return a list of voucher suggestions.
 
@@ -200,6 +201,9 @@ def suggest_vouchers(
 
     accounts_text = _context_accounts(sie)
 
+    from .samples import format_for_ai as _fmt_samples
+    samples_text = _fmt_samples(samples or [], sie.account_map()) if samples else ''
+
     system = f"""You are a Swedish accounting assistant.
 
 Company: {sie.company_name} ({sie.org_nr})
@@ -213,6 +217,8 @@ Opening balance in CSV statement: {opening_balance}
 
 Relevant accounts:
 {accounts_text}
+
+{samples_text}
 
 Common skattekonto accounting treatments (Swedish BAS):
   Intäktsränta (positive)         → 1630 debit / 8314 credit

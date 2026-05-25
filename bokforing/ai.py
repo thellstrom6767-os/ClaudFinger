@@ -130,7 +130,8 @@ def _encode(path: str) -> tuple[str, str]:
         return mt, base64.standard_b64encode(f.read()).decode()
 
 
-def suggest_voucher(file_path: str, sie: SIEFile) -> dict:
+def suggest_voucher(file_path: str, sie: SIEFile,
+                    samples: list[dict] | None = None) -> dict:
     """Analyse a receipt/invoice and return a structured voucher suggestion.
 
     Returns a dict with keys:
@@ -156,6 +157,9 @@ def suggest_voucher(file_path: str, sie: SIEFile) -> dict:
     accounts_text = _context_accounts(sie)
     recent_text   = _recent_vouchers_text(sie)
 
+    from .samples import format_for_ai as _fmt_samples
+    samples_text = _fmt_samples(samples or [], sie.account_map()) if samples else ''
+
     system = f"""You are a Swedish accounting assistant helping to book documents.
 
 Company: {sie.company_name} ({sie.org_nr})
@@ -173,6 +177,8 @@ SIE sign convention (use this exactly):
   Debit  = positive  (asset increases, expense incurred)
   Credit = negative  (liability increases, income earned)
 All transaction amounts in a voucher must sum to exactly zero.
+
+{samples_text}
 
 {recent_text}
 

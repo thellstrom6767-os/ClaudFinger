@@ -82,6 +82,8 @@ Set the ``ANTHROPIC_API_KEY`` environment variable before use:
 * The document (base64-encoded).
 * The chart of accounts filtered to the operationally relevant ranges
   (income, expense, VAT, bank/cash accounts).
+* All sample vouchers from ``samples.json`` (if the file exists) as curated
+  account-selection hints — see the ``sample`` command group below.
 * The last 5 vouchers for pattern recognition.
 * The company name, org nr, and fiscal year.
 * The SIE sign convention and Swedish VAT rates.
@@ -227,6 +229,119 @@ Moms …                         2650                     1630
 
    # Process Q1 only
    python main.py skattekonto skattekonto.csv --from 2025-01-01 --to 2025-03-31
+
+
+sample
+~~~~~~
+
+Manage sample vouchers that are sent to Claude with every ``scan`` and
+``skattekonto`` call to guide account selection.  Samples are stored in
+``samples.json`` in the same directory as the ledger file and are
+**not year-specific** — they apply to all fiscal years.
+
+A pre-populated ``samples.json`` with common transaction types for
+Retsina Consulting AB is included with the application.
+
+Subcommands
+^^^^^^^^^^^
+
+**sample add**
+
+Add a sample voucher interactively.  Prompts for a description, optional
+notes, and a list of transaction lines (account, amount, label).
+
+.. code-block:: text
+
+   Usage: main.py sample add
+
+.. code-block:: bash
+
+   python main.py sample add
+
+**sample from-voucher REF**
+
+Copy an existing ledger voucher into the sample file.  Displays the
+voucher, then prompts for a description (defaulting to the voucher label)
+and optional notes before saving.
+
+.. code-block:: text
+
+   Usage: main.py sample from-voucher REF
+
+.. option:: REF
+
+   Voucher reference in the form ``A:5`` or plain ``5`` (defaults to
+   series A).
+
+.. code-block:: bash
+
+   python main.py sample from-voucher A:12
+   python main.py sample from-voucher 7
+
+**sample list**
+
+List all sample vouchers showing ID, description, and transaction count.
+
+.. code-block:: text
+
+   Usage: main.py sample list
+
+**sample show SAMPLE_ID**
+
+Show the full detail of a single sample voucher.
+
+.. code-block:: text
+
+   Usage: main.py sample show SAMPLE_ID
+
+.. option:: SAMPLE_ID
+
+   Numeric sample ID as shown by ``sample list``.
+
+**sample delete SAMPLE_ID**
+
+Delete a sample voucher by ID after confirmation.
+
+.. code-block:: text
+
+   Usage: main.py sample delete SAMPLE_ID
+
+**Storage**
+
+``samples.json`` is a plain UTF-8 JSON file:
+
+.. code-block:: json
+
+   {
+     "samples": [
+       {
+         "id": 1,
+         "description": "Royaltyintäkt – faktura till svensk kund (25% moms)",
+         "transactions": [
+           {"account": "1510", "amount": "12500.00"},
+           {"account": "3030", "amount": "-10000.00"},
+           {"account": "2610", "amount": "-2500.00"}
+         ],
+         "notes": "Försäljning av rättigheter med 25% utgående moms."
+       }
+     ]
+   }
+
+**Example workflow**
+
+.. code-block:: bash
+
+   # See what samples exist
+   python main.py sample list
+
+   # Inspect a specific sample
+   python main.py sample show 3
+
+   # Add a new pattern
+   python main.py sample add
+
+   # Remove an outdated pattern
+   python main.py sample delete 2
 
 
 ----

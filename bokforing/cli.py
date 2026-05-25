@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 import click
 
 from . import underlag as underlag_module
+from . import samples as samples_module
 from .reports import generate_balansrapport, generate_resultatrapport
 
 from . import sie as sie_module
@@ -488,9 +489,11 @@ def scan(ctx, file, attach, series):
     sie  = sie_module.parse(path)
     account_map = sie.account_map()
 
+    samples = samples_module.list_samples(path)
+
     click.echo(f'Analysing {os.path.basename(file)} …')
     try:
-        suggestion = _suggest(file, sie)
+        suggestion = _suggest(file, sie, samples=samples)
     except EnvironmentError as e:
         click.echo(click.style(str(e), fg='red'), err=True)
         sys.exit(1)
@@ -626,10 +629,13 @@ def skattekonto_cmd(ctx, csv_file, from_date, to_date, series):
         click.echo('Aborted.')
         return
 
+    samples = samples_module.list_samples(path)
+
     # ── AI batch call ─────────────────────────────────────────────────────
     click.echo('Analysing with Claude…')
     try:
-        suggestions = _suggest_batch(transactions, sie, opening_balance)
+        suggestions = _suggest_batch(transactions, sie, opening_balance,
+                                     samples=samples)
     except EnvironmentError as e:
         click.echo(click.style(str(e), fg='red'), err=True)
         sys.exit(1)
@@ -915,6 +921,209 @@ def sie5import(ctx, si5_file, output):
     click.echo(f'  Underlag documents restored: {n_docs}')
     if not sie.accounts[0].sru if sie.accounts else True:
         click.echo('  Note: SRU codes are not stored in SIE 5 — not present in restored file')
+
+
+# ─── sample ──────────────────────────────────────────────────────────────────
+
+@cli.group('sample')
+@click.pass_context
+def sample_group(ctx):
+    """Manage sample vouchers used as AI account-selection hints.
+
+    Samples are stored in samples.json alongside the ledger and sent to
+    Claude with every scan/skattekonto call to guide account selection.
+    """
+    pass
+
+
+@sample_group.command('add')
+@click.pass_context
+def sample_add(ctx):
+    """Add a sample voucher interactively."""
+    from decimal import Decimal, InvalidOperation
+
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+    account_map = sie.account_map()
+
+    click.echo('\nAdding sample voucher')
+    description = click.prompt('Description')
+    notes = click.prompt('Notes (optional)', default='', show_default=False)
+
+    transactions: list[dict] = []
+    running = Decimal('0')
+
+    click.echo('\nTransactions — enter account number or name, empty line when done:')
+    while True:
+        if transactions:
+            color = 'green' if running == 0 else 'yellow'
+            click.echo(click.style(f'  Running balance: {running:+.2f}', fg=color))
+
+        acct_in = click.prompt('  Account', default='', show_default=False).strip()
+        if not acct_in:
+            break
+
+        acc = find_account(sie, acct_in)
+        if acc:
+            click.echo(f'         → {acc.number}  {acc.label}')
+            acct_nr = acc.number
+        else:
+            click.echo(f'         (account {acct_in} not in chart of accounts)')
+            acct_nr = acct_in
+
+        while True:
+            raw = click.prompt('  Amount').strip().replace(' ', '').replace(',', '.')
+            try:
+                amount = Decimal(raw)
+                break
+            except InvalidOperation:
+                click.echo('  Invalid amount, try again.')
+
+        t_label = click.prompt('  Label', default='', show_default=False)
+        transactions.append({'account': acct_nr, 'amount': str(amount),
+                             'label': t_label})
+        running += amount
+
+    if not transactions:
+        click.echo('No transactions entered — aborted.')
+        return
+
+    if running != 0:
+        click.echo(click.style(
+            f'\nSample does not balance (off by {running:+.2f})', fg='yellow'))
+        if not click.confirm('Save unbalanced sample?', default=False):
+            click.echo('Aborted.')
+            return
+
+    click.echo(f'\n{"─" * 58}')
+    click.echo(f'  {description}')
+    for t in transactions:
+        name = _acc_name(account_map, t['account'])
+        desc = t['label'] if t['label'] else name
+        click.echo(f'  {t["account"]:<6}  {t["amount"]:>12}  {desc}')
+    if notes:
+        click.echo(f'  Notes: {notes}')
+    click.echo(f'{"─" * 58}')
+
+    if not click.confirm('\nSave?', default=True):
+        click.echo('Aborted.')
+        return
+
+    sample = samples_module.add_sample(path, description, transactions, notes)
+    click.echo(f'Saved as sample #{sample["id"]}')
+
+
+@sample_group.command('list')
+@click.pass_context
+def sample_list(ctx):
+    """List all sample vouchers."""
+    path = _resolve_ledger(ctx.obj)
+    all_samples = samples_module.list_samples(path)
+
+    if not all_samples:
+        click.echo('No sample vouchers defined.')
+        click.echo('Use: bokforing sample add')
+        return
+
+    samples_path = samples_module._samples_path(path)
+    click.echo(f'\nSample vouchers — {os.path.basename(samples_path)}  '
+               f'({len(all_samples)} total)')
+    click.echo(f'  {"#":>4}  {"Description":<45}  Txns')
+    click.echo('  ' + '─' * 58)
+    for s in all_samples:
+        click.echo(f'  {s["id"]:>4}  {s["description"]:<45}  '
+                   f'{len(s["transactions"])}')
+    click.echo()
+
+
+@sample_group.command('show')
+@click.argument('sample_id', type=int)
+@click.pass_context
+def sample_show(ctx, sample_id):
+    """Show details of a sample voucher. SAMPLE_ID is the numeric ID."""
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+    account_map = sie.account_map()
+
+    s = samples_module.get_sample(path, sample_id)
+    if s is None:
+        click.echo(f'Sample #{sample_id} not found.', err=True)
+        sys.exit(1)
+
+    click.echo(f'\nSample #{s["id"]}: {s["description"]}')
+    click.echo('─' * 58)
+    for t in s['transactions']:
+        name = _acc_name(account_map, t['account'])
+        lbl = f'  ({t["label"]})' if t.get('label') else ''
+        click.echo(f'  {t["account"]:<6}  {t["amount"]:>12}  {name}{lbl}')
+    click.echo('─' * 58)
+    if s.get('notes'):
+        click.echo(f'Notes: {s["notes"]}')
+    click.echo()
+
+
+@sample_group.command('from-voucher')
+@click.argument('ref')
+@click.pass_context
+def sample_from_voucher(ctx, ref):
+    """Add a sample by copying an existing voucher. REF format: A:5 or 5."""
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+    account_map = sie.account_map()
+
+    series, num_str = (ref.split(':', 1) if ':' in ref else ('A', ref))
+    if not num_str.isdigit():
+        click.echo(f'Invalid reference: {ref}  (expected e.g. A:5 or 5)', err=True)
+        sys.exit(1)
+    num = int(num_str)
+
+    v = next((x for x in sie.vouchers if x.series == series and x.number == num), None)
+    if v is None:
+        click.echo(f'Voucher {series}:{num} not found.', err=True)
+        sys.exit(1)
+
+    click.echo(f'\n{series}:{num}  {_fmt_date(v.date)}  {v.label}')
+    click.echo('─' * 58)
+    for t in v.transactions:
+        name = _acc_name(account_map, t.account)
+        lbl = f'  ({t.label})' if t.label else ''
+        click.echo(f'  {t.account:<6}  {t.amount:>12.2f}  {name}{lbl}')
+    click.echo('─' * 58)
+
+    description = click.prompt('\nDescription', default=v.label)
+    notes = click.prompt('Notes (optional)', default='', show_default=False)
+
+    if not click.confirm('Save as sample?', default=True):
+        click.echo('Aborted.')
+        return
+
+    transactions = [
+        {'account': t.account, 'amount': str(t.amount),
+         **({'label': t.label} if t.label else {})}
+        for t in v.transactions
+    ]
+    sample = samples_module.add_sample(path, description, transactions, notes)
+    click.echo(f'Saved as sample #{sample["id"]}')
+
+
+@sample_group.command('delete')
+@click.argument('sample_id', type=int)
+@click.pass_context
+def sample_delete(ctx, sample_id):
+    """Delete a sample voucher by ID."""
+    path = _resolve_ledger(ctx.obj)
+    s = samples_module.get_sample(path, sample_id)
+    if s is None:
+        click.echo(f'Sample #{sample_id} not found.', err=True)
+        sys.exit(1)
+
+    click.echo(f'  #{s["id"]}  {s["description"]}')
+    if not click.confirm('Delete?', default=False):
+        click.echo('Aborted.')
+        return
+
+    samples_module.delete_sample(path, sample_id)
+    click.echo(f'Deleted sample #{sample_id}.')
 
 
 # ─── underlag ────────────────────────────────────────────────────────────────

@@ -1,0 +1,71 @@
+{
+  "samples": [
+    {
+      "id": 1,
+      "description": "Royaltyintäkt – faktura till svensk kund (25% moms)",
+      "transactions": [
+        {"account": "1510", "amount": "12500.00"},
+        {"account": "3030", "amount": "-10000.00"},
+        {"account": "2610", "amount": "-2500.00"}
+      ],
+      "notes": "Försäljning av rättigheter till svensk kund med 25% utgående moms. Betald faktura: debet 1941, kredit 1510."
+    },
+    {
+      "id": 2,
+      "description": "Royaltyintäkt – betalning inkommen",
+      "transactions": [
+        {"account": "1941", "amount": "12500.00"},
+        {"account": "1510", "amount": "-12500.00"}
+      ],
+      "notes": "Betalning av kundfordran. Momsredovisning sker via fakturan (sample #1)."
+    },
+    {
+      "id": 3,
+      "description": "Telekommunikation / mobilabonnemang (25% moms)",
+      "transactions": [
+        {"account": "6210", "amount": "800.00"},
+        {"account": "2640", "amount": "200.00"},
+        {"account": "1941", "amount": "-1000.00"}
+      ],
+      "notes": "Telefon och datakommunikation med standard 25% ingående moms."
+    },
+    {
+      "id": 4,
+      "description": "Programvara / molntjänst (25% moms)",
+      "transactions": [
+        {"account": "5420", "amount": "400.00"},
+        {"account": "2640", "amount": "100.00"},
+        {"account": "1941", "amount": "-500.00"}
+      ],
+      "notes": "Programvaror, SaaS-tjänster och liknande IT-kostnader på konto 5420."
+    },
+    {
+      "id": 5,
+      "description": "Redovisningstjänster / revisor (25% moms)",
+      "transactions": [
+        {"account": "6530", "amount": "4000.00"},
+        {"account": "2640", "amount": "1000.00"},
+        {"account": "2440", "amount": "-5000.00"}
+      ],
+      "notes": "Leverantörsfaktura för redovisning eller revision. 2440 krediteras till dess fakturan betalas."
+    },
+    {
+      "id": 6,
+      "description": "Bankavgifter (momsfritt)",
+      "transactions": [
+        {"account": "6570", "amount": "150.00"},
+        {"account": "1941", "amount": "-150.00"}
+      ],
+      "notes": "Bankavgifter är alltid momsfria — ingen ingående moms att dra av."
+    },
+    {
+      "id": 7,
+      "description": "F-skatt betalning till skattekonto",
+      "transactions": [
+        {"account": "2519", "amount": "12000.00"},
+        {"account": "1941", "amount": "-12000.00"}
+      ],
+      "notes": "Betalning av debiterad F-skatt. Minskar skulden på 2519. Ingen moms."
+    }
+  ]
+}
