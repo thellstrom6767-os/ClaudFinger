@@ -521,6 +521,28 @@ renamed using a collision-safe two-pass strategy:
 2. Files are renamed from the temporary names to their final
    ``Verifikation_A{n}[…]`` names, and the SQLite index is updated.
 
+**Label reference updates**
+
+After computing the renumber table, ``sort`` scans every voucher label
+and transaction label for embedded voucher references in the form
+``A:5`` (series letter, colon, number).  If any references point to a
+voucher that was renumbered, the proposed substitutions are displayed
+and you are asked whether to update them:
+
+.. code-block:: text
+
+   2 label(s) reference renumbered voucher(s):
+     Voucher   Field  Old                                    →  New
+     ────────────────────────────────────────────────────────────────────────────
+     A:4       label  Rättelse av A:1                        →  Rättelse av A:2
+     A:4       trans  Motbokning A:3                         →  Motbokning A:4
+
+   Update 2 label reference(s)? [Y/n]:
+
+Answering ``Y`` applies the substitutions in memory before the ledger
+file is written.  Answering ``N`` leaves all labels unchanged (the
+renumbering still proceeds).
+
 .. warning::
 
    ``sort`` rewrites the ledger file in full.  This is a one-time

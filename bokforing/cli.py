@@ -2,6 +2,7 @@
 from __future__ import annotations
 import glob
 import os
+import re
 import subprocess
 import sys
 from datetime import date
@@ -731,6 +732,38 @@ def skattekonto_cmd(ctx, csv_file, from_date, to_date, series):
 
 # ─── sort ────────────────────────────────────────────────────────────────────
 
+_VER_REF_PAT = re.compile(r'([A-Z]):(\d+)')
+
+
+def _apply_ref_subst(text: str, renumber_map: dict) -> str:
+    def repl(m: re.Match) -> str:
+        key = (m.group(1), int(m.group(2)))
+        if key in renumber_map:
+            new_s, new_n = renumber_map[key]
+            return f'{new_s}:{new_n}'
+        return m.group(0)
+    return _VER_REF_PAT.sub(repl, text)
+
+
+def _collect_label_ref_changes(vouchers: list, renumber_map: dict) -> list:
+    """Return list of (voucher, kind, obj, old_text, new_text).
+
+    kind is 'label' (voucher.label) or 'trans' (transaction.label).
+    obj is the voucher or transaction whose label field needs updating.
+    """
+    changes = []
+    for v in vouchers:
+        new_lbl = _apply_ref_subst(v.label, renumber_map)
+        if new_lbl != v.label:
+            changes.append((v, 'label', v, v.label, new_lbl))
+        for t in v.transactions:
+            if t.label:
+                new_tlbl = _apply_ref_subst(t.label, renumber_map)
+                if new_tlbl != t.label:
+                    changes.append((v, 'trans', t, t.label, new_tlbl))
+    return changes
+
+
 @cli.command('sort')
 @click.option('--by', 'sort_by',
               type=click.Choice(['registration-date', 'voucher-date'],
@@ -771,24 +804,51 @@ def sort_cmd(ctx, sort_by, dry_run):
         lbl  = (v.label[:35])         if v                  else ''
         click.echo(f'  {old_s}:{old_n:<6}  {new_s}:{new_n:<6}  {reg:10}  {vdat:12}  {lbl}')
 
+    # Check for voucher references embedded in labels
+    ref_changes = _collect_label_ref_changes(new_sie.vouchers, renumber_map)
+    update_refs = False
+    if ref_changes:
+        click.echo(f'\n{len(ref_changes)} label(s) reference renumbered voucher(s):')
+        click.echo(f'  {"Voucher":<8}  {"Field":<5}  '
+                   f'{"Old label":<35}  →  New label')
+        click.echo('  ' + '─' * 76)
+        for v, kind, _obj, old, new in ref_changes:
+            field = 'label' if kind == 'label' else 'trans'
+            click.echo(f'  {v.series}:{v.number:<5}  {field:<5}  {old:<35}  →  {new}')
+
     if dry_run:
         click.echo('\nDry run — no changes written.')
         return
 
     click.echo()
-    if not click.confirm(f'Rewrite {os.path.basename(path)} and rename underlag?',
-                         default=True):
+    if ref_changes:
+        update_refs = click.confirm(
+            f'Update {len(ref_changes)} label reference(s)?', default=True)
+
+    suffix = (f', update {len(ref_changes)} label reference(s)' if update_refs else '')
+    if not click.confirm(
+            f'Rewrite {os.path.basename(path)} and rename underlag{suffix}?',
+            default=True):
         click.echo('Aborted.')
         return
+
+    if update_refs:
+        for _v, kind, obj, _old, new in ref_changes:
+            if kind == 'label':
+                obj.label = new
+            else:
+                obj.label = new
 
     sie_module.write(path, new_sie)
 
     n_files = underlag_module.renumber_vouchers(path, renumber_map)
 
-    click.echo(f'Done.')
+    click.echo('Done.')
     click.echo(f'  {len(renumber_map)} vouchers renumbered')
     if n_files:
         click.echo(f'  {n_files} underlag file(s) renamed')
+    if update_refs:
+        click.echo(f'  {len(ref_changes)} label reference(s) updated')
 
 
 # ─── report ──────────────────────────────────────────────────────────────────
