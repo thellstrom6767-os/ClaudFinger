@@ -129,6 +129,8 @@ def _make_styles(doc: OpenDocumentSpreadsheet) -> dict[str, str]:
     styles['total_num']  = cell_style('total_num',   bold=True, halign='right', fontsize=9, top_border=True)
     styles['total_pct']  = cell_style('total_pct',   italic=True, halign='right', fontsize=7, top_border=True, color='#555555')
     styles['empty']      = cell_style('empty',       fontsize=8)
+    styles['comp_lbl']   = cell_style('comp_lbl',    bold=True, italic=True, fontsize=8, color='#444444')
+    styles['comp_num']   = cell_style('comp_num',    bold=True, italic=True, halign='right', fontsize=8, color='#444444')
     return styles
 
 
@@ -688,6 +690,25 @@ def generate_balansrapport(sie: SIEFile, output_path: str) -> None:
         tot_kap_u += su
         if si != Z or sp != Z or su != Z:
             _bal_empty_row(sheet)
+
+    # ── Beräknat resultat ─────────────────────────────────────────────────
+    # Sum of all income/expense account transactions (3xxx–8xxx).
+    # ING = 0 (P&L resets each year); DENNA = running YTD; UTG = same.
+    ytd_p = sum(
+        (v for k, v in period.items()
+         if k.isdigit() and 3000 <= int(k) <= 8999),
+        Z,
+    )
+    if ytd_p != Z:
+        tr = TableRow()
+        tr.addElement(_text_cell('Beräknat resultat', 'comp_lbl'))
+        tr.addElement(_num_cell(_sek(Z),     'comp_num'))   # ING always 0
+        tr.addElement(_num_cell(_sek(ytd_p), 'comp_num'))   # DENNA = YTD P&L
+        tr.addElement(_num_cell(_sek(ytd_p), 'comp_num'))   # UTG = same
+        sheet.addElement(tr)
+        tot_kap_p += ytd_p
+        tot_kap_u += ytd_p
+        _bal_empty_row(sheet)
 
     _bal_subtotal_row(sheet, 'SUMMA EGET OCH FRÄMMANDE KAPITAL',
                       tot_kap_i, tot_kap_p, tot_kap_u, style_prefix='total')
