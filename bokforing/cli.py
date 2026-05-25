@@ -563,6 +563,161 @@ def scan(ctx, file, attach, series):
         click.echo(f'Underlag attached: {stored}')
 
 
+# ─── skattekonto ─────────────────────────────────────────────────────────────
+
+@cli.command('skattekonto')
+@click.argument('csv_file', type=click.Path(exists=True))
+@click.option('--from', 'from_date', default=None, metavar='YYYY-MM-DD',
+              help='Start of date range (inclusive).')
+@click.option('--to',   'to_date',   default=None, metavar='YYYY-MM-DD',
+              help='End of date range (inclusive).')
+@click.option('--series', default='A', show_default=True,
+              help='Voucher series to use.')
+@click.pass_context
+def skattekonto_cmd(ctx, csv_file, from_date, to_date, series):
+    """Import skattekonto transactions and create vouchers with AI suggestions.
+
+    Reads a Skatteverket skattekonto CSV export, sends all transactions in
+    the date range to Claude in a single call, then steps through each
+    suggestion for operator sign-off.
+
+    Sign-off options per transaction:
+      a — accept and save
+      e — edit before saving
+      s — skip (do not save, continue to next)
+      q — quit (stop processing, keep what was saved so far)
+
+    Requires ANTHROPIC_API_KEY to be set in the environment.
+    """
+    from .skattekonto import parse_csv, suggest_vouchers as _suggest_batch
+    from decimal import Decimal
+
+    path = _resolve_ledger(ctx.obj)
+    sie  = sie_module.parse(path)
+    account_map = sie.account_map()
+
+    # ── Parse CSV ─────────────────────────────────────────────────────────
+    opening_balance, transactions = parse_csv(csv_file, from_date, to_date)
+
+    if not transactions:
+        click.echo('No transactions found in the specified date range.')
+        return
+
+    date_info = ''
+    if from_date or to_date:
+        date_info = f'  ({from_date or "…"} → {to_date or "…"})'
+    click.echo(f'\nSkattekonto transactions to process{date_info}:')
+    click.echo(f'  Opening balance in CSV: {opening_balance:,.2f}')
+    click.echo()
+    click.echo(f'  {"#":<4}  {"Date":10}  {"Amount":>10}  Description')
+    click.echo('  ' + '─' * 55)
+    for i, t in enumerate(transactions):
+        click.echo(f'  {i:<4}  {_fmt_date(t["date"]):10}  '
+                   f'{t["amount"]:>10,.2f}  {t["description"]}')
+    click.echo()
+
+    if not click.confirm(f'Send {len(transactions)} transaction(s) to Claude for analysis?',
+                         default=True):
+        click.echo('Aborted.')
+        return
+
+    # ── AI batch call ─────────────────────────────────────────────────────
+    click.echo('Analysing with Claude…')
+    try:
+        suggestions = _suggest_batch(transactions, sie, opening_balance)
+    except EnvironmentError as e:
+        click.echo(click.style(str(e), fg='red'), err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(click.style(f'Analysis failed: {e}', fg='red'), err=True)
+        sys.exit(1)
+
+    # Build a row_index → suggestion map for reliable lookup
+    suggestion_map = {s.get('row_index', i): s
+                      for i, s in enumerate(suggestions)}
+
+    # ── Per-transaction sign-off ──────────────────────────────────────────
+    saved = 0
+    skipped = 0
+
+    for i, txn in enumerate(transactions):
+        suggestion = suggestion_map.get(i, {})
+        if not suggestion:
+            click.echo(f'\n[{i+1}/{len(transactions)}] No suggestion returned for '
+                       f'{txn["date_display"]} {txn["description"]} — skipping.')
+            skipped += 1
+            continue
+
+        vdate = suggestion.get('date', txn['date'])
+        label = suggestion.get('description', txn['description'])
+        txns  = suggestion.get('transactions', [])
+
+        click.echo(f'\n[{i+1}/{len(transactions)}] '
+                   f'{txn["date_display"]}  {txn["description"]}  '
+                   f'({txn["amount"]:+,.2f})')
+        _display_suggestion(suggestion, account_map, sie)
+
+        # Sign-off loop
+        while True:
+            click.echo()
+            choice = click.prompt(
+                '[a]ccept  [e]dit  [s]kip  [q]uit',
+                default='a',
+                prompt_suffix='  Choice',
+            ).strip().lower()
+
+            if choice == 'q':
+                click.echo(f'\nStopped.  Saved {saved}, skipped {skipped + (len(transactions) - i - 1)} remaining.')
+                return
+
+            if choice == 's':
+                skipped += 1
+                break
+
+            if choice == 'e':
+                vdate, label, txns = _edit_suggestion(
+                    suggestion, sie, vdate, label, txns)
+                suggestion = {**suggestion, 'date': vdate,
+                              'description': label, 'transactions': txns}
+                _display_suggestion(suggestion, account_map, sie)
+                continue
+
+            if choice == 'a':
+                total = sum(t.get('amount', Decimal('0')) for t in txns)
+                if total != 0:
+                    click.echo(click.style(
+                        f'Voucher does not balance (off by {total:+.2f}). '
+                        'Edit before accepting.', fg='red'))
+                    continue
+                break
+
+            click.echo("Please enter 'a', 'e', 's', or 'q'.")
+
+        if choice == 's':
+            continue
+
+        # Save
+        from .models import Voucher, Transaction
+        num = next_voucher_number(sie, series)
+        voucher = Voucher(
+            series=series, number=num,
+            date=vdate, label=label,
+            reg_date=_today(), signature='',
+            transactions=[
+                Transaction(account=t['account'], amount=t['amount'],
+                            date=vdate, label=t.get('label', ''))
+                for t in txns
+            ],
+        )
+        sie_module.append_voucher(path, voucher)
+        # Re-parse so next_voucher_number is correct for the next iteration
+        sie = sie_module.parse(path)
+        saved += 1
+        click.echo(f'Saved as {series}:{num}')
+
+    click.echo(f'\nDone — {saved} voucher(s) saved, {skipped} skipped.')
+
+
 # ─── sort ────────────────────────────────────────────────────────────────────
 
 @cli.command('sort')

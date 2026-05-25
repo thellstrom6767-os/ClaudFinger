@@ -147,6 +147,88 @@ Three choices are offered at every review step:
    python main.py scan bank_statement.pdf --series B
 
 
+skattekonto
+~~~~~~~~~~~
+
+Import transactions from a Skatteverket **skattekonto** CSV export and
+create vouchers with AI-suggested accounting treatment.
+
+.. code-block:: text
+
+   Usage: main.py skattekonto [OPTIONS] CSV_FILE
+
+.. option:: CSV_FILE
+
+   Path to the skattekonto CSV exported from Skatteverket's web portal.
+   The file is semicolon-delimited, UTF-8 with BOM, and includes an
+   opening-balance header row.
+
+.. option:: --from YYYY-MM-DD
+
+   Start of the date range to process (inclusive).  Rows before this
+   date are ignored.
+
+.. option:: --to YYYY-MM-DD
+
+   End of the date range (inclusive).
+
+.. option:: --series TEXT
+
+   Voucher series letter.  Default: ``A``.
+
+**Prerequisites**
+
+Set ``ANTHROPIC_API_KEY`` in the environment (same requirement as ``scan``).
+
+**How it works**
+
+1. Parses the CSV and displays all rows in the date range for review.
+2. Sends **all rows in a single API call** so Claude has full context
+   (e.g. recognising that a "Korrigerad intäktsränta" reverses a
+   preceding "Intäktsränta").
+3. Steps through each suggestion one at a time for operator sign-off.
+
+**Common transaction types and their accounting treatment**
+
+============================== ======================== ========================
+Description                    Debit                    Credit
+============================== ======================== ========================
+Intäktsränta                   1630                     8314
+Kostnadsränta                  8423                     1630
+Korrigerad intäktsränta        8314                     1630
+Korrigerad kostnadsränta       1630                     8423
+Debiterad preliminärskatt      2519                     1630
+Slutlig skatt                  2512                     1630
+Inbetalning bokförd …          1630                     1941
+Moms …                         2650                     1630
+============================== ======================== ========================
+
+**Sign-off options per transaction**
+
+``a`` (accept)
+  Save the voucher.  Only allowed when the balance is exactly zero.
+
+``e`` (edit)
+  Open the pre-filled interactive editor.  The suggestion is
+  redisplayed after editing.
+
+``s`` (skip)
+  Do not save this transaction; move to the next.
+
+``q`` (quit)
+  Stop processing.  Any vouchers already accepted and saved are kept.
+
+**Example**
+
+.. code-block:: bash
+
+   # Process all of 2025
+   python main.py skattekonto skattekonto.csv --from 2025-01-01 --to 2025-12-31
+
+   # Process Q1 only
+   python main.py skattekonto skattekonto.csv --from 2025-01-01 --to 2025-03-31
+
+
 ----
 
 Ledger Initialisation
