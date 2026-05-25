@@ -221,7 +221,8 @@ def balance(ctx, filter):
     click.echo('─' * 62)
 
     total_assets = Decimal('0')
-    total_liab = Decimal('0')
+    total_liab   = Decimal('0')
+    total_pl     = Decimal('0')
 
     for acct in accounts:
         bal = balances[acct]
@@ -231,15 +232,19 @@ def balance(ctx, filter):
             total_assets += bal
         elif acct.startswith('2'):
             total_liab += bal
+        elif acct.isdigit() and 3000 <= int(acct) <= 8999:
+            total_pl += bal
 
     click.echo('─' * 62)
     if not filter:
         click.echo(f'  {"Assets (1xxx)":<44}  {_fmt_amount(total_assets)}')
         click.echo(f'  {"Liabilities/equity (2xxx)":<44}  {_fmt_amount(total_liab)}')
-        diff = total_assets + total_liab
-        color = 'green' if diff == 0 else 'red'
-        label_diff = 'Balanced ✓' if diff == 0 else f'Difference (!)'
-        click.echo(click.style(f'  {label_diff:<44}  {_fmt_amount(diff)}', fg=color))
+        if total_pl != 0:
+            click.echo(f'  {"Year-to-date P&L (3-8xxx, not yet closed)":<44}  {_fmt_amount(total_pl)}')
+        net = total_assets + total_liab + total_pl
+        color = 'green' if net == 0 else 'red'
+        label = 'Balanced ✓' if net == 0 else 'Difference (!)'
+        click.echo(click.style(f'  {label:<44}  {_fmt_amount(net)}', fg=color))
     click.echo()
 
 
