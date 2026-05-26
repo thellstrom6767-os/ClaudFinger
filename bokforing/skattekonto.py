@@ -224,9 +224,25 @@ Common skattekonto accounting treatments (Swedish BAS):
   Intäktsränta (positive)         → 1630 debit / 8314 credit
   Kostnadsränta (negative)        → 1630 credit / 8423 debit
   Korrigerad intäktsränta         → reverse of Intäktsränta
-  Korrigerad kostnadsränta        → reverse of Kostnadsränta
+  Korrigerad kostnadsränta        → same accounts as Kostnadsränta, follow
+                                    the CSV sign directly:
+    CSV negative → 1630 credit (−) / 8423 debit (+)   [same as Kostnadsränta]
+    CSV positive → 1630 debit  (+) / 8423 credit (−)  [refund]
+    Use the CSV amount as-is for the 1630 line; 8423 gets the opposite sign.
+    Do NOT invent a direction — derive it from the CSV amount sign.
   Debiterad preliminärskatt (neg) → 1630 credit / 2519 debit
-  Slutlig skatt (negative)        → 1630 credit / 2512 debit (use current 2512 balance context)
+  Slutlig skatt (negative)        → 1630 credit / 2512 debit
+    DEFAULT (no match): one voucher pair, 1630 credit / 2512 debit only.
+    Do NOT clear or touch 2519 unless the GROUPING RULE below applies.
+    GROUPING RULE: scan the full transaction list for any row whose
+    description contains "preliminärskatt" AND whose CSV amount is
+    POSITIVE (money credited back to the account) AND whose date is
+    within 1 calendar day of the Slutlig skatt date.  If such a row
+    exists, this grouping takes PRECEDENCE — combine both rows into ONE
+    voucher (two separate transaction-pairs) regardless of how that row
+    might otherwise be classified.  Use the row_index of the Slutlig
+    skatt row; for the matched row set transactions to [] and
+    confidence to "high" with notes "merged into slutlig skatt voucher".
   Inbetalning bokförd (positive)  → 1630 debit / 1941 credit
   Moms … (negative)               → 1630 credit / 2650 debit
 
@@ -248,7 +264,7 @@ Return one suggestion per row (row_index 0 to {len(transactions) - 1})."""
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=16000,
         system=system,
         tools=[_TOOL],
         tool_choice={'type': 'tool', 'name': 'suggest_vouchers'},
