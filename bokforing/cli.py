@@ -436,7 +436,8 @@ def _edit_suggestion(suggestion: dict, sie, vdate: str, label: str,
                 amount = Decimal(raw); break
             except _IE:
                 click.echo('  Invalid amount.')
-        lbl = click.prompt('  Label', default=t.get('label', ''), show_default=False)
+        lbl = click.prompt('  Label', default=t.get('label', ''),
+                           show_default=bool(t.get('label')))
         new_txns.append({'account': acct_nr, 'amount': amount, 'label': lbl})
         running += amount
         color = 'green' if running == 0 else 'yellow'
