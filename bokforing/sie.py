@@ -11,6 +11,20 @@ ENCODING = 'cp437'
 PROGRAM_NAME = "Claude's converter"
 PROGRAM_VERSION = '2026-05-20'
 
+_DASH_MAP = str.maketrans({
+    '–': '-',  # en-dash
+    '—': '-',  # em-dash
+    '―': '-',  # horizontal bar
+    '−': '-',  # minus sign
+    '‐': '-',  # hyphen
+    '‑': '-',  # non-breaking hyphen
+})
+
+
+def _norm(s: str) -> str:
+    """Normalize Unicode dash variants to ASCII hyphen for CP437 safety."""
+    return s.translate(_DASH_MAP)
+
 
 def _today() -> str:
     return date.today().strftime('%Y%m%d')
@@ -120,11 +134,11 @@ def _fmt(amount: Decimal) -> str:
 
 def _format_voucher(v: Voucher) -> str:
     lines = [
-        f'#VER "{v.series}" {v.number} {v.date} "{v.label}" {v.reg_date} "{v.signature}" ',
+        f'#VER "{v.series}" {v.number} {v.date} "{_norm(v.label)}" {v.reg_date} "{v.signature}" ',
         '{',
     ]
     for t in v.transactions:
-        lines.append(f'#TRANS {t.account} {{}} {_fmt(t.amount)} {v.date} "{t.label}" 0.0')
+        lines.append(f'#TRANS {t.account} {{}} {_fmt(t.amount)} {v.date} "{_norm(t.label)}" 0.0')
     lines.append('}')
     return '\n'.join(lines)
 
