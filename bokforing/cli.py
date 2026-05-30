@@ -1306,7 +1306,8 @@ def accounts_rename(ctx, number):
     if bas_name and bas_name != acc.label:
         click.echo(f'  BAS standard : {bas_name}')
 
-    new_name = click.prompt('New name', default=acc.label).strip()
+    default = bas_name if bas_name else acc.label
+    new_name = click.prompt('New name', default=default).strip()
     if not new_name:
         click.echo('Name is required — aborted.')
         return
