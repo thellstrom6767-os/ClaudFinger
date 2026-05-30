@@ -1187,6 +1187,143 @@ def sample_delete(ctx, sample_id):
     click.echo(f'Deleted sample #{sample_id}.')
 
 
+# ─── accounts ────────────────────────────────────────────────────────────────
+
+@cli.group('accounts')
+@click.pass_context
+def accounts_group(ctx):
+    """Manage the chart of accounts.
+
+    Accounts can be looked up against the BAS-kontoplan (Swedish standard
+    chart of accounts) to get the canonical name and account type.
+    """
+    pass
+
+
+@accounts_group.command('list')
+@click.argument('prefix', required=False, default=None, metavar='[PREFIX]')
+@click.pass_context
+def accounts_list(ctx, prefix):
+    """List accounts in the chart of accounts.
+
+    Optionally filter by account number prefix, e.g. 'accounts list 3' for
+    income accounts.
+    """
+    from . import bas as bas_module
+
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+
+    accounts = sorted(sie.accounts, key=lambda a: a.number)
+    if prefix:
+        accounts = [a for a in accounts if a.number.startswith(prefix)]
+
+    click.echo(f'\nChart of accounts — {sie.company_name}  ({len(sie.accounts)} total)')
+    if prefix:
+        click.echo(f'Filter: {prefix}*  ({len(accounts)} matching)')
+    click.echo('─' * 62)
+    click.echo(f'  {"Nr":<6}  {"Type"}  {"Description"}')
+    click.echo('─' * 62)
+    for acc in accounts:
+        bas_entry = bas_module.lookup(acc.number)
+        bas_marker = ' *' if bas_entry and bas_entry[0] != acc.label else ''
+        click.echo(f'  {acc.number:<6}  {acc.ktyp or "?":^4}  {acc.label}{bas_marker}')
+    click.echo()
+
+
+@accounts_group.command('add')
+@click.argument('number')
+@click.pass_context
+def accounts_add(ctx, number):
+    """Add a new account to the chart of accounts.
+
+    NUMBER is a 4-digit account number, e.g. 3105.  The BAS-kontoplan is
+    consulted and the standard name is offered as a default.
+    """
+    import bisect
+    from . import bas as bas_module
+    from .models import Account
+
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+
+    if any(a.number == number for a in sie.accounts):
+        click.echo(f'Account {number} already exists in the chart of accounts.', err=True)
+        sys.exit(1)
+
+    bas_entry = bas_module.lookup(number)
+    bas_name  = bas_entry[0] if bas_entry else ''
+    bas_ktyp  = bas_entry[1] if bas_entry else bas_module.ktyp_for(number)
+
+    if bas_name:
+        click.echo(f'\nBAS: {number}  {bas_name}  [{bas_ktyp}]')
+    else:
+        click.echo(f'\nAccount {number} is not in the BAS table — enter a name manually.')
+
+    name = click.prompt('Name', default=bas_name, show_default=bool(bas_name)).strip()
+    if not name:
+        click.echo('Name is required — aborted.')
+        return
+
+    click.echo(f'\n  {number:<6}  {bas_ktyp:^4}  {name}')
+    if not click.confirm('Add account?', default=True):
+        click.echo('Aborted.')
+        return
+
+    new_acc = Account(number=number, label=name, ktyp=bas_ktyp)
+    numbers = [a.number for a in sie.accounts]
+    idx = bisect.bisect_left(numbers, number)
+    sie.accounts.insert(idx, new_acc)
+
+    sie_module.write(path, sie)
+    click.echo(f'Added {number} "{name}" to {os.path.basename(path)}')
+
+
+@accounts_group.command('rename')
+@click.argument('number')
+@click.pass_context
+def accounts_rename(ctx, number):
+    """Rename an existing account.
+
+    The current name and the BAS standard name (if available) are shown as
+    context before you enter the new name.
+    """
+    from . import bas as bas_module
+
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+
+    acc = next((a for a in sie.accounts if a.number == number), None)
+    if acc is None:
+        click.echo(f'Account {number} not found in the chart of accounts.', err=True)
+        sys.exit(1)
+
+    bas_entry = bas_module.lookup(number)
+    bas_name  = bas_entry[0] if bas_entry else None
+
+    click.echo(f'\nAccount {number}')
+    click.echo(f'  Current name : {acc.label}')
+    if bas_name and bas_name != acc.label:
+        click.echo(f'  BAS standard : {bas_name}')
+
+    new_name = click.prompt('New name', default=acc.label).strip()
+    if not new_name:
+        click.echo('Name is required — aborted.')
+        return
+    if new_name == acc.label:
+        click.echo('Name unchanged — nothing to do.')
+        return
+
+    click.echo(f'\n  {number}  {acc.label!r}  →  {new_name!r}')
+    if not click.confirm('Save?', default=True):
+        click.echo('Aborted.')
+        return
+
+    acc.label = new_name
+    sie_module.write(path, sie)
+    click.echo(f'Renamed {number} in {os.path.basename(path)}')
+
+
 # ─── underlag ────────────────────────────────────────────────────────────────
 
 def _parse_ref(ref: str) -> tuple[str, int]:

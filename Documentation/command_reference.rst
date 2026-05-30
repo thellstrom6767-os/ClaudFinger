@@ -422,6 +422,107 @@ in red.
 
 ----
 
+Chart of Accounts
+-----------------
+
+The ``accounts`` command group lets you view and edit the chart of accounts
+stored in the SIE 4 ledger file.  All subcommands consult the **BAS-kontoplan**
+(Swedish standard chart of accounts) to suggest canonical names and account
+types automatically.
+
+accounts list
+~~~~~~~~~~~~~
+
+List all accounts in the chart of accounts.
+
+.. code-block:: text
+
+   Usage: main.py accounts list [PREFIX]
+
+.. option:: PREFIX
+
+   Optional account-number prefix to filter results, e.g. ``3`` for income
+   accounts, ``26`` for VAT accounts.
+
+The output shows account number, BAS account type (T/S/I/K), and the label
+stored in the ledger.  A trailing ``*`` marks accounts where the stored label
+differs from the BAS standard name.
+
+.. code-block:: text
+
+   Chart of accounts — Retsina Consulting AB  (238 total)
+   Filter: 3*  (18 matching)
+   ──────────────────────────────────────────────────────────────
+     Nr      Type  Description
+   ──────────────────────────────────────────────────────────────
+     3010     I    Försäljning *
+     3044     I    Momsfri försäljning, (Typ STIM)
+     3500     I    Fakturerade kostnader
+     …
+
+accounts add
+~~~~~~~~~~~~
+
+Add a new account to the chart of accounts.
+
+.. code-block:: text
+
+   Usage: main.py accounts add NUMBER
+
+.. option:: NUMBER
+
+   Four-digit account number to add.
+
+The BAS standard name and account type for NUMBER are looked up and offered
+as defaults.  If the number is not in the BAS table you are prompted to enter
+a name manually.  The new account is inserted into the sorted position in the
+accounts list and the ledger file is rewritten.
+
+.. code-block:: text
+
+   BAS: 3105  Försäljning tjänster, 25 % moms (Sverige)  [I]
+   Name [Försäljning tjänster, 25 % moms (Sverige)]:
+     3105     I    Försäljning tjänster, 25 % moms (Sverige)
+   Add account? [Y/n]:
+   Added 3105 "Försäljning tjänster, 25 % moms (Sverige)" to ledger_2025.se
+
+accounts rename
+~~~~~~~~~~~~~~~
+
+Rename an existing account.
+
+.. code-block:: text
+
+   Usage: main.py accounts rename NUMBER
+
+.. option:: NUMBER
+
+   Four-digit account number to rename.
+
+The current label and the BAS standard name (when they differ) are displayed
+as context before you enter the new name.  Pressing Enter accepts the current
+name unchanged.
+
+.. code-block:: text
+
+   Account 1930
+     Current name : Företagskonto
+     BAS standard : Företagskonto / checkkonto
+   New name [Företagskonto]: Företagskonto / checkkonto
+     1930  'Företagskonto'  →  'Företagskonto / checkkonto'
+   Save? [Y/n]:
+   Renamed 1930 in ledger_2025.se
+
+.. note::
+
+   Both ``accounts add`` and ``accounts rename`` rewrite the entire ledger
+   file in place (same mechanism as ``sort``).  The voucher data is preserved
+   unchanged.  The BAS-kontoplan embedded in the tool covers the 2024
+   edition; accounts outside the table can still be added with a custom name.
+
+
+----
+
 Daily Bookkeeping
 -----------------
 
