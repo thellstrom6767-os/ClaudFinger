@@ -1583,9 +1583,16 @@ def bokslut(ctx):
               help='Statslåneräntan 30 nov föregående år, t.ex. 0.0262')
 @click.option('--konto-ar', 'konto_ar', multiple=True, metavar='KONTO:ÅR',
               help='Mappa periodiseringsfondkonto till inkomstår (t.ex. 2115:2015). Kan upprepas.')
+@click.option('--series', default='A', show_default=True,
+              help='Verifikationsserie att använda.')
 @click.pass_context
-def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar):
-    """Beräkna bolagsskatt och visa det skattemässiga beräkningsflödet."""
+def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar, series):
+    """Beräkna bolagsskatt, visa beräkningsflödet och skapa verifikation.
+
+    Erbjuder att boka Debet 8910 / Kredit 2512 och bifogar beräkningsflödet
+    som underlag (.txt) till verifikationen.
+    """
+    import tempfile
     from .skatt import berakna_skatt
 
     path = _resolve_ledger(ctx.obj)
@@ -1623,27 +1630,33 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar):
     def _amt(v: Decimal) -> str:
         return f'{v:>16,.2f}'
 
+    captured: list[str] = []
+
+    def _out(text: str = '') -> None:
+        captured.append(text)
+        click.echo(text)
+
     def _row(label: str, amount: Decimal, note: str = '') -> None:
         note_str = f'   {note}' if note else ''
-        click.echo(f'  {label:<44}{_amt(amount)}{note_str}')
+        _out(f'  {label:<44}{_amt(amount)}{note_str}')
 
     W = 64
     sep = '─' * W
     dbl = '═' * W
 
     header = f'Skatteberäkning — {sie.company_name}' if sie.company_name else 'Skatteberäkning'
-    click.echo()
-    click.echo(header)
+    _out()
+    _out(header)
     if sie.year_begins and sie.year_ends:
         yb = _fmt_date(sie.year_begins)
         ye = _fmt_date(sie.year_ends)
-        click.echo(f'Räkenskapsår: {yb} – {ye}')
-    click.echo(dbl)
-    click.echo()
+        _out(f'Räkenskapsår: {yb} – {ye}')
+    _out(dbl)
+    _out()
 
     _row('Resultat före skatt (konto 3000–8899)', b.res_fore_skatt)
-    click.echo()
-    click.echo('  Skattemässiga justeringar:')
+    _out()
+    _out('  Skattemässiga justeringar:')
 
     _Z = Decimal('0')
 
@@ -1657,24 +1670,63 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar):
     _row('    Schablonintäkt periodiseringsfond', b.schablonintakt, note_sch)
 
     if b.upprakning_posts:
-        click.echo('    Uppräkning vid återföring:')
+        _out('    Uppräkning vid återföring:')
         for p in b.upprakning_posts:
             pct = f'{float(p.factor - 1)*100:.0f}%'
             note_up = f'({_amt(p.aterfort).strip()} återfört × {pct})'
             _row(f'      {p.account} år {p.income_year} faktor {p.factor}',
                  p.upprakning, note_up)
 
-    click.echo()
-    click.echo(f'  {sep}')
+    _out()
+    _out(f'  {sep}')
     _row('Skattemässigt resultat', b.skattbart_resultat)
-    click.echo(f'  × {float(b.skattesats)*100:.1f}%')
-    click.echo(f'  {sep}')
+    _out(f'  × {float(b.skattesats)*100:.1f}%')
+    _out(f'  {sep}')
     _row('Beräknad bolagsskatt', b.bolagsskatt)
 
     if b.bolagsskatt != _Z:
-        click.echo()
-        click.echo(f'  → Debet  8910{_label("8910")}')
-        click.echo(f'  → Kredit 2512{_label("2512")}')
+        _out()
+        _out(f'  Föreslagen verifikation:')
+        _out(f'  Debet  8910{_label("8910")}   {_amt(b.bolagsskatt).strip()}')
+        _out(f'  Kredit 2512{_label("2512")}   {_amt(-b.bolagsskatt).strip()}')
+        _out()
+
+        if click.confirm('Skapa verifikation?', default=True):
+            year = sie.year_ends[:4] if sie.year_ends else _today()[:4]
+            default_date = sie.year_ends if sie.year_ends else _today()
+            vdate = click.prompt('Datum (YYYYMMDD)', default=default_date)
+            vlabel = click.prompt('Beskrivning', default=f'Bolagsskatt {year}')
+
+            from .models import Voucher, Transaction
+            num = next_voucher_number(sie, series)
+            voucher = Voucher(
+                series=series,
+                number=num,
+                date=vdate,
+                label=vlabel,
+                reg_date=_today(),
+                signature='',
+                transactions=[
+                    Transaction(account='8910', amount=b.bolagsskatt,
+                                date=vdate, label=vlabel),
+                    Transaction(account='2512', amount=-b.bolagsskatt,
+                                date=vdate, label=vlabel),
+                ],
+            )
+            sie_module.append_voucher(path, voucher)
+            click.echo(f'Sparad som {series}:{num}')
+
+            tmpdir = tempfile.mkdtemp()
+            tmp_path = os.path.join(tmpdir, f'skatteberakning_{year}.txt')
+            try:
+                with open(tmp_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(captured))
+                stored = underlag_module.add_file(path, series, num, tmp_path)
+                click.echo(f'Underlag sparat: {stored}')
+            finally:
+                os.unlink(tmp_path)
+                os.rmdir(tmpdir)
+
     elif b.skattbart_resultat <= _Z:
         click.echo('  (Skattemässigt underskott – ingen bolagsskatt detta år)')
 

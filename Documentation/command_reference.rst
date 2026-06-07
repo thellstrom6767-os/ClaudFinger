@@ -239,10 +239,9 @@ Year-end closing commands.
 bokslut skatt
 ^^^^^^^^^^^^^
 
-Print the full Swedish corporate income tax (bolagsskatt) calculation flow
-for the current fiscal year.  The command reads the ledger and computes the
-taxable income step by step, showing every adjustment from the accounting
-result to the final tax figure.  It does **not** post any vouchers.
+Compute the full Swedish corporate income tax (bolagsskatt) calculation flow
+for the current fiscal year, then offer to post the resulting voucher and
+attach the printed calculation as a ``.txt`` underlag file.
 
 .. code-block:: text
 
@@ -253,6 +252,7 @@ result to the final tax figure.  It does **not** post any vouchers.
      --statslanerantan RÄNTA  Statslåneräntan 30 nov föregående år (required)
      --konto-ar KONTO:ÅR      Override income year for a periodiseringsfond
                               account, e.g. 2115:2015.  Repeatable.
+     --series TEXT            Voucher series to use [default: A]
 
 The calculation follows Swedish tax law:
 
@@ -275,6 +275,12 @@ The calculation follows Swedish tax law:
 
 6. **Skattemässigt resultat × skattesats = Bolagsskatt**
    → Debet 8910, Kredit 2512.
+
+After displaying the calculation, if bolagsskatt > 0 the command prompts
+``Skapa verifikation?`` (default yes).  On confirmation it asks for a date
+(default: fiscal year-end) and a description (default: ``Bolagsskatt YYYY``),
+posts the voucher, and saves the full calculation flow as
+``skatteberakning_YYYY.txt`` attached as underlag to that voucher.
 
 Account numbering convention for periodiseringsfonder: account 2120
 corresponds to the fund set aside in income year 2020, 2121 → 2021, etc.
