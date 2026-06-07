@@ -1680,9 +1680,11 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar, series):
     _out()
     _out(f'  {sep}')
     _row('Skattemässigt resultat', b.skattbart_resultat)
+    _row('    Avrundat nedåt, närmaste 10 kr', b.skattbart_avrundat)
     _out(f'  × {float(b.skattesats)*100:.1f}%')
     _out(f'  {sep}')
-    _row('Beräknad bolagsskatt', b.bolagsskatt)
+    _row('Beräknad bolagsskatt', b.bolagsskatt_beraknad)
+    _row('    Avrundat nedåt till närmaste krona', b.bolagsskatt)
 
     if b.bolagsskatt != _Z:
         _out()

@@ -1,6 +1,6 @@
 """Swedish corporate income tax (bolagsskatt) calculation."""
 from __future__ import annotations
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from typing import NamedTuple
 
 from .models import SIEFile
@@ -26,9 +26,11 @@ class SkattBerakning(NamedTuple):
     schablonintakt: Decimal     # positive; added to taxable income
     upprakning_posts: list[UpprakningPost]
     total_upprakning: Decimal
-    skattbart_resultat: Decimal
+    skattbart_resultat: Decimal     # raw taxable income before rounding
+    skattbart_avrundat: Decimal     # rounded down to nearest 10 SEK
     skattesats: Decimal
-    bolagsskatt: Decimal
+    bolagsskatt_beraknad: Decimal   # skattbart_avrundat × skattesats, 2 dp
+    bolagsskatt: Decimal            # rounded down to nearest 1 SEK
 
 
 def _income_year(account_nr: str, year_map: dict[str, int]) -> int | None:
@@ -118,7 +120,14 @@ def berakna_skatt(
                  + schablonintakt
                  + total_upprakning)
 
-    bolagsskatt = (skattbart * skattesats).quantize(Decimal('0.01')) if skattbart > Z else Z
+    skattbart_avrundat = (skattbart.quantize(Decimal('10'), rounding=ROUND_FLOOR)
+                          if skattbart > Z else skattbart)
+
+    bolagsskatt_beraknad = ((skattbart_avrundat * skattesats).quantize(Decimal('0.01'))
+                            if skattbart_avrundat > Z else Z)
+
+    bolagsskatt = (bolagsskatt_beraknad.to_integral_value(rounding=ROUND_FLOOR)
+                   if bolagsskatt_beraknad > Z else Z)
 
     return SkattBerakning(
         res_fore_skatt=res_fore_skatt,
@@ -130,6 +139,8 @@ def berakna_skatt(
         upprakning_posts=upprakning_posts,
         total_upprakning=total_upprakning,
         skattbart_resultat=skattbart,
+        skattbart_avrundat=skattbart_avrundat,
         skattesats=skattesats,
+        bolagsskatt_beraknad=bolagsskatt_beraknad,
         bolagsskatt=bolagsskatt,
     )
