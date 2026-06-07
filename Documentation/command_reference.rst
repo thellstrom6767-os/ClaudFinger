@@ -231,6 +231,63 @@ Moms …                         2650                     1630
    python main.py skattekonto skattekonto.csv --from 2025-01-01 --to 2025-03-31
 
 
+bokslut
+~~~~~~~
+
+Year-end closing commands.
+
+bokslut skatt
+^^^^^^^^^^^^^
+
+Print the full Swedish corporate income tax (bolagsskatt) calculation flow
+for the current fiscal year.  The command reads the ledger and computes the
+taxable income step by step, showing every adjustment from the accounting
+result to the final tax figure.  It does **not** post any vouchers.
+
+.. code-block:: text
+
+   Usage: main.py bokslut skatt [OPTIONS]
+
+   Options:
+     --skattesats SATS        Bolagsskattesats [default: 0.206]
+     --statslanerantan RÄNTA  Statslåneräntan 30 nov föregående år (required)
+     --konto-ar KONTO:ÅR      Override income year for a periodiseringsfond
+                              account, e.g. 2115:2015.  Repeatable.
+
+The calculation follows Swedish tax law:
+
+1. **Resultat före skatt** — sum of all P&L account movements (3000–8899).
+2. **Intäktsränta skattekontot (8314)** — subtracted; tax-exempt under IL.
+3. **Räntekostnader skatter (8423)** — added back; non-deductible under IL.
+4. **Schablonintäkt periodiseringsfond** — deemed return on opening balances
+   of periodiseringsfond accounts (2110–2129), computed as
+   ``IB_total × statslåneräntan`` (30 Nov preceding year).
+5. **Uppräkning vid återföring** — mandatory scale-up when reversing old
+   reserves set aside when bolagsskatt was higher:
+
+   - Avsatt ≤ 2018 (22 %): reversed amount × 1.06
+   - Avsatt 2019–2020 (21.4 %): reversed amount × 1.04
+   - Avsatt ≥ 2021 (20.6 %): no adjustment
+
+   Återföring is detected as positive (debit) TRANS on the 212x account
+   during the year.  The vintage year is derived from the account number
+   (212X → 20XX) unless overridden with ``--konto-ar``.
+
+6. **Skattemässigt resultat × skattesats = Bolagsskatt**
+   → Debet 8910, Kredit 2512.
+
+Account numbering convention for periodiseringsfonder: account 2120
+corresponds to the fund set aside in income year 2020, 2121 → 2021, etc.
+Use ``--konto-ar`` for any account that deviates from this pattern.
+
+.. code-block:: bash
+
+   python main.py bokslut skatt --statslanerantan 0.0262
+
+   # With a non-standard account mapping
+   python main.py bokslut skatt --statslanerantan 0.0194 --konto-ar 2115:2015
+
+
 sample
 ~~~~~~
 

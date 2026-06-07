@@ -1565,3 +1565,117 @@ def underlag_remove(ctx, file_id):
         click.echo(f'Removed: {deleted}')
     else:
         click.echo(f'No file with ID {file_id}.', err=True)
+
+
+# ─── bokslut ──────────────────────────────────────────────────────────────────
+
+@cli.group('bokslut')
+@click.pass_context
+def bokslut(ctx):
+    """Year-end closing commands."""
+    pass
+
+
+@bokslut.command('skatt')
+@click.option('--skattesats', default='0.206', show_default=True, metavar='SATS',
+              help='Bolagsskattesats, t.ex. 0.206')
+@click.option('--statslanerantan', required=True, metavar='RÄNTA',
+              help='Statslåneräntan 30 nov föregående år, t.ex. 0.0262')
+@click.option('--konto-ar', 'konto_ar', multiple=True, metavar='KONTO:ÅR',
+              help='Mappa periodiseringsfondkonto till inkomstår (t.ex. 2115:2015). Kan upprepas.')
+@click.pass_context
+def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar):
+    """Beräkna bolagsskatt och visa det skattemässiga beräkningsflödet."""
+    from .skatt import berakna_skatt
+
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+
+    try:
+        sats = Decimal(skattesats)
+    except InvalidOperation:
+        raise click.BadParameter(f'Ogiltigt tal: {skattesats!r}', param_hint='--skattesats')
+    try:
+        rantan = Decimal(statslanerantan)
+    except InvalidOperation:
+        raise click.BadParameter(f'Ogiltigt tal: {statslanerantan!r}', param_hint='--statslanerantan')
+
+    year_map: dict[str, int] = {}
+    for entry in konto_ar:
+        parts = entry.split(':')
+        if len(parts) != 2:
+            raise click.BadParameter(
+                f'Förväntar KONTO:ÅR, fick {entry!r}', param_hint='--konto-ar')
+        konto, ar = parts[0].strip(), parts[1].strip()
+        if not ar.isdigit() or len(ar) != 4:
+            raise click.BadParameter(
+                f'Ogiltigt år {ar!r} (förväntar fyrsiffrigt år)', param_hint='--konto-ar')
+        year_map[konto] = int(ar)
+
+    b = berakna_skatt(sie, sats, rantan, year_map)
+
+    acct_map = sie.account_map()
+
+    def _label(nr: str) -> str:
+        a = acct_map.get(nr)
+        return f' {a.label}' if a else ''
+
+    def _amt(v: Decimal) -> str:
+        return f'{v:>16,.2f}'
+
+    def _row(label: str, amount: Decimal, note: str = '') -> None:
+        note_str = f'   {note}' if note else ''
+        click.echo(f'  {label:<44}{_amt(amount)}{note_str}')
+
+    W = 64
+    sep = '─' * W
+    dbl = '═' * W
+
+    header = f'Skatteberäkning — {sie.company_name}' if sie.company_name else 'Skatteberäkning'
+    click.echo()
+    click.echo(header)
+    if sie.year_begins and sie.year_ends:
+        yb = _fmt_date(sie.year_begins)
+        ye = _fmt_date(sie.year_ends)
+        click.echo(f'Räkenskapsår: {yb} – {ye}')
+    click.echo(dbl)
+    click.echo()
+
+    _row('Resultat före skatt (konto 3000–8899)', b.res_fore_skatt)
+    click.echo()
+    click.echo('  Skattemässiga justeringar:')
+
+    _Z = Decimal('0')
+
+    if b.raw_8314 != _Z:
+        _row('    Intäktsränta skattekontot (8314)', b.raw_8314, 'skattefri')
+
+    if b.raw_8423 != _Z:
+        _row('    Räntekostnader skatter (8423)', b.raw_8423, 'ej avdragsgill')
+
+    note_sch = f'({_amt(b.pf_ib_total).strip()} × {float(b.statslanerantan)*100:.2f}%)'
+    _row('    Schablonintäkt periodiseringsfond', b.schablonintakt, note_sch)
+
+    if b.upprakning_posts:
+        click.echo('    Uppräkning vid återföring:')
+        for p in b.upprakning_posts:
+            pct = f'{float(p.factor - 1)*100:.0f}%'
+            note_up = f'({_amt(p.aterfort).strip()} återfört × {pct})'
+            _row(f'      {p.account} år {p.income_year} faktor {p.factor}',
+                 p.upprakning, note_up)
+
+    click.echo()
+    click.echo(f'  {sep}')
+    _row('Skattemässigt resultat', b.skattbart_resultat)
+    click.echo(f'  × {float(b.skattesats)*100:.1f}%')
+    click.echo(f'  {sep}')
+    _row('Beräknad bolagsskatt', b.bolagsskatt)
+
+    if b.bolagsskatt != _Z:
+        click.echo()
+        click.echo(f'  → Debet  8910{_label("8910")}')
+        click.echo(f'  → Kredit 2512{_label("2512")}')
+    elif b.skattbart_resultat <= _Z:
+        click.echo('  (Skattemässigt underskott – ingen bolagsskatt detta år)')
+
+    click.echo()
