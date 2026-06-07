@@ -120,7 +120,7 @@ def berakna_skatt(
                  + schablonintakt
                  + total_upprakning)
 
-    skattbart_avrundat = (skattbart.quantize(Decimal('10'), rounding=ROUND_FLOOR)
+    skattbart_avrundat = (skattbart.quantize(Decimal('1E+1'), rounding=ROUND_FLOOR)
                           if skattbart > Z else skattbart)
 
     bolagsskatt_beraknad = ((skattbart_avrundat * skattesats).quantize(Decimal('0.01'))
