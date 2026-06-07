@@ -168,6 +168,26 @@ def file_path(ledger_path: str, file_id: int) -> str | None:
     return os.path.join(underlag_dir, row[0])
 
 
+def remove_all_for_voucher(ledger_path: str, series: str, number: int) -> int:
+    """Remove all underlag files for a voucher. Returns the number of files removed."""
+    underlag_dir, _ = _paths(ledger_path)
+    conn = _connect(ledger_path)
+    try:
+        rows = conn.execute(
+            'SELECT id, filename FROM underlag WHERE series=? AND number=? ORDER BY id',
+            (series, number)
+        ).fetchall()
+        for _row_id, filename in rows:
+            filepath = os.path.join(underlag_dir, filename)
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+        conn.execute('DELETE FROM underlag WHERE series=? AND number=?', (series, number))
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
 def renumber_vouchers(
     ledger_path: str,
     renumber_map: dict[tuple[str, int], tuple[str, int]],

@@ -760,6 +760,72 @@ lines and their account labels.
    python main.py show A:13
    python main.py show 13
 
+delete
+~~~~~~
+
+Delete a voucher, remove all its attached underlag, and renumber
+subsequent vouchers in the same series.
+
+.. code-block:: text
+
+   Usage: main.py delete [OPTIONS] REF
+
+.. option:: REF
+
+   Voucher reference.  Format: ``SERIES:NUMBER`` (e.g. ``A:5``) or
+   just the number (e.g. ``5``, defaults to series ``A``).
+
+.. option:: --dry-run
+
+   Print what would be removed and renumbered without writing any
+   changes.  Use this first to review the impact before committing.
+
+**Behaviour**
+
+The command displays the voucher to be deleted, lists any attached
+underlag files, and shows the renumbering table for all higher-numbered
+vouchers in the same series (each shifts down by one).
+
+After the renumbering table, ``delete`` scans all remaining voucher
+and transaction labels for embedded references in the form ``A:5``.
+Two categories are reported:
+
+* **Renumbered-voucher references** — labels that point to a voucher
+  whose number is shifting down.  You are offered the option to update
+  these automatically (default: yes).
+* **Dangling references** — labels that point to the deleted voucher
+  itself.  These are shown as a warning; they cannot be fixed
+  automatically and must be corrected by hand.
+
+The default answer to the final confirmation prompt is **no** (``N``)
+to prevent accidental deletions.
+
+.. warning::
+
+   ``delete`` rewrites the ledger file in full, in the same way as
+   ``sort``.  The operation is not reversible through the CLI; keep the
+   file in version control or make a backup before proceeding.
+
+**Underlag**
+
+All files attached to the deleted voucher are removed from both the
+underlag directory and the SQLite index.  Underlag for renumbered
+vouchers is renamed using the same collision-safe two-pass strategy as
+``sort``.
+
+**Example**
+
+.. code-block:: bash
+
+   # Preview what would change
+   python main.py delete --dry-run A:5
+
+   # Delete voucher A:5 (prompts for confirmation)
+   python main.py delete A:5
+
+   # Verify nothing broke
+   python main.py verify
+
 history
 ~~~~~~~
 

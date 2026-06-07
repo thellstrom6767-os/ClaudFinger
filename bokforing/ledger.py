@@ -93,6 +93,36 @@ def init_from_previous(prev: SIEFile, new_begins: str, new_ends: str) -> tuple[S
 RenumberMap = dict[tuple[str, int], tuple[str, int]]  # (series,old) → (series,new)
 
 
+def delete_voucher(sie: SIEFile, series: str, number: int) -> tuple[SIEFile, RenumberMap]:
+    """Remove a voucher and shift subsequent vouchers in the same series down by one.
+
+    Returns (new_sie, renumber_map) where renumber_map maps every voucher
+    whose number changed: {(series, old_number): (series, new_number)}.
+    """
+    new_sie = copy.copy(sie)
+    new_sie.accounts = list(sie.accounts)
+    new_sie.ib = dict(sie.ib)
+    new_sie.ub = dict(sie.ub)
+    new_sie.res = dict(sie.res)
+
+    renumber_map: RenumberMap = {}
+    new_vouchers: list[Voucher] = []
+
+    for v in sie.vouchers:
+        if v.series == series and v.number == number:
+            continue
+        new_v = copy.copy(v)
+        new_v.transactions = list(v.transactions)
+        if v.series == series and v.number > number:
+            new_num = v.number - 1
+            renumber_map[(series, v.number)] = (series, new_num)
+            new_v.number = new_num
+        new_vouchers.append(new_v)
+
+    new_sie.vouchers = new_vouchers
+    return new_sie, renumber_map
+
+
 def sort_vouchers(sie: SIEFile, key: str = 'reg_date') -> tuple[SIEFile, RenumberMap]:
     """Sort vouchers within each series and renumber them 1, 2, 3, …
 

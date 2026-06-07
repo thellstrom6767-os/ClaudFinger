@@ -15,8 +15,9 @@ from . import samples as samples_module
 from .reports import generate_balansrapport, generate_resultatrapport
 
 from . import sie as sie_module
-from .ledger import (find_account, get_account_history, get_balances,
-                     init_from_previous, next_voucher_number, sort_vouchers)
+from .ledger import (delete_voucher as _delete_voucher_logic, find_account,
+                     get_account_history, get_balances, init_from_previous,
+                     next_voucher_number, sort_vouchers)
 from .models import Transaction, Voucher
 
 
@@ -309,6 +310,136 @@ def show(ctx, ref):
     color = 'green' if total == 0 else 'red'
     click.echo(click.style(f'  {"Total":>20}  {total:>12.2f}', fg=color))
     click.echo()
+
+
+# ─── delete ──────────────────────────────────────────────────────────────────
+
+@cli.command('delete')
+@click.argument('ref')
+@click.option('--dry-run', is_flag=True,
+              help='Show what would change without writing anything.')
+@click.pass_context
+def delete_voucher_cmd(ctx, ref, dry_run):
+    """Delete a voucher and renumber subsequent vouchers in the same series.
+
+    REF format: A:5 or just 5 (defaults to series A).
+
+    All underlag attached to the deleted voucher is also removed.
+    Vouchers with higher numbers in the same series are shifted down by one
+    and their underlag files renamed to match, using the same two-pass strategy
+    as sort.  Label references to renumbered vouchers can be updated automatically.
+    """
+    path = _resolve_ledger(ctx.obj)
+    sie = sie_module.parse(path)
+    account_map = sie.account_map()
+
+    series, num_str = (ref.split(':', 1) if ':' in ref else ('A', ref))
+    if not num_str.isdigit():
+        click.echo(f'Invalid reference: {ref}  (expected e.g. A:5 or 5)', err=True)
+        sys.exit(1)
+    num = int(num_str)
+
+    v = next((x for x in sie.vouchers if x.series == series and x.number == num), None)
+    if v is None:
+        click.echo(f'Voucher {series}:{num} not found.', err=True)
+        sys.exit(1)
+
+    # Show the voucher to be deleted
+    click.echo(f'\n{series}:{num}  {_fmt_date(v.date)}  {v.label}')
+    click.echo(f'Registered: {_fmt_date(v.reg_date)}   Signature: {v.signature or "—"}')
+    click.echo('─' * 58)
+    for t in v.transactions:
+        name = _acc_name(account_map, t.account)
+        extra = f'  ({t.label})' if t.label else ''
+        click.echo(f'  {t.account:<6}  {t.amount:>12.2f}  {name}{extra}')
+    click.echo('─' * 58)
+
+    underlag_files = underlag_module.list_for_voucher(path, series, num)
+    if underlag_files:
+        click.echo(f'  Underlag: {len(underlag_files)} file(s) attached')
+
+    # Compute what changes after deletion
+    new_sie, renumber_map = _delete_voucher_logic(sie, series, num)
+
+    if renumber_map:
+        click.echo(f'\n{len(renumber_map)} voucher(s) will be renumbered:')
+        click.echo(f'  {"Old":<8}  {"New":<8}  Description')
+        click.echo('  ' + '─' * 52)
+        for (old_s, old_n), (new_s, new_n) in sorted(renumber_map.items()):
+            v2 = next((x for x in sie.vouchers
+                       if x.series == old_s and x.number == old_n), None)
+            lbl = v2.label[:38] if v2 else ''
+            click.echo(f'  {old_s}:{old_n:<6}  {new_s}:{new_n:<6}  {lbl}')
+
+    # Label references to renumbered vouchers
+    ref_changes = _collect_label_ref_changes(new_sie.vouchers, renumber_map)
+    if ref_changes:
+        click.echo(f'\n{len(ref_changes)} label(s) reference renumbered voucher(s):')
+        click.echo(f'  {"Voucher":<8}  {"Field":<5}  '
+                   f'{"Old label":<35}  →  New label')
+        click.echo('  ' + '─' * 76)
+        for v2, kind, _obj, old, new in ref_changes:
+            field = 'label' if kind == 'label' else 'trans'
+            click.echo(f'  {v2.series}:{v2.number:<5}  {field:<5}  {old:<35}  →  {new}')
+
+    # Label references to the deleted voucher (will become dangling)
+    dangling = []
+    for v2 in new_sie.vouchers:
+        if any(m.group(1) == series and int(m.group(2)) == num
+               for m in _VER_REF_PAT.finditer(v2.label)):
+            dangling.append((v2, 'label', v2.label))
+        for t in v2.transactions:
+            if t.label and any(m.group(1) == series and int(m.group(2)) == num
+                               for m in _VER_REF_PAT.finditer(t.label)):
+                dangling.append((v2, 'trans', t.label))
+    if dangling:
+        click.echo(click.style(
+            f'\nWarning: {len(dangling)} label(s) reference the deleted '
+            f'{series}:{num} and will become dangling:', fg='yellow'))
+        for v2, kind, lbl in dangling:
+            field = 'label' if kind == 'label' else 'trans'
+            click.echo(f'  {v2.series}:{v2.number:<5}  {field:<5}  {lbl}')
+
+    if dry_run:
+        click.echo('\nDry run — no changes written.')
+        return
+
+    click.echo()
+    update_refs = False
+    if ref_changes:
+        update_refs = click.confirm(
+            f'Update {len(ref_changes)} label reference(s)?', default=True)
+
+    underlag_info = (f', remove {len(underlag_files)} underlag file(s)'
+                     if underlag_files else '')
+    renumber_info = (f', renumber {len(renumber_map)} following voucher(s)'
+                     if renumber_map else '')
+    ref_info = (f', update {len(ref_changes)} label reference(s)'
+                if update_refs else '')
+    if not click.confirm(
+            f'Delete {series}:{num}{underlag_info}{renumber_info}{ref_info}?',
+            default=False):
+        click.echo('Aborted.')
+        return
+
+    if update_refs:
+        for _v, kind, obj, _old, new in ref_changes:
+            obj.label = new
+
+    n_underlag = underlag_module.remove_all_for_voucher(path, series, num)
+    sie_module.write(path, new_sie)
+    n_files = underlag_module.renumber_vouchers(path, renumber_map)
+
+    click.echo('Done.')
+    click.echo(f'  Deleted {series}:{num}')
+    if n_underlag:
+        click.echo(f'  {n_underlag} underlag file(s) removed')
+    if renumber_map:
+        click.echo(f'  {len(renumber_map)} voucher(s) renumbered')
+    if n_files:
+        click.echo(f'  {n_files} underlag file(s) renamed')
+    if update_refs:
+        click.echo(f'  {len(ref_changes)} label reference(s) updated')
 
 
 # ─── history ─────────────────────────────────────────────────────────────────
