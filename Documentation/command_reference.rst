@@ -238,6 +238,60 @@ Moms …                         2650                     1630
    python main.py skattekonto skattekonto.csv --from 2025-01-01 --to 2025-03-31
 
 
+moms
+~~~~
+
+Compute the Swedish VAT (moms) declaration for a given accounting period,
+then offer to post the settlement voucher and attach the printed output as a
+``.txt`` underlag file.
+
+.. code-block:: text
+
+   Usage: main.py moms [OPTIONS]
+
+   Options:
+     --from YYYYMMDD   Period start date, inclusive (required)
+     --to   YYYYMMDD   Period end date, inclusive (required)
+     --series TEXT     Voucher series to use [default: A]
+
+The command sums the period movements (transactions whose date falls within
+``[from, to]``) on these accounts:
+
+- **2610** Utgående moms 25 % → Ruta 10
+- **2620** Utgående moms 12 % → Ruta 11
+- **2630** Utgående moms 6 %  → Ruta 12
+- **2640** Ingående moms       → Ruta 30
+
+Each box is rounded **independently** to the nearest whole SEK
+(``ROUND_HALF_UP``).  Ruta 49 (moms to pay / receive) is computed from the
+already-rounded box values.
+
+After displaying the declaration, the command offers to create a settlement
+voucher that:
+
+1. Clears each of 2610/2620/2630/2640 to zero using the **exact** (unrounded)
+   period balances.
+2. Posts the **rounded** declared net to 2650 (Redovisningskonto för moms) —
+   so 2650 exactly matches the figure on the declaration form.
+3. Posts any öre rounding residual to **3740** (Öresavrundning), keeping the
+   voucher balanced.
+
+The full printed output is saved as ``momsdeklaration_YYYYMMDD_YYYYMMDD.txt``
+and attached as underlag to the settlement voucher.
+
+Sign convention for 2650: a positive amount (debit) means Skatteverket owes
+the company (Ruta 49 < 0); a negative amount (credit) means the company owes
+Skatteverket (Ruta 49 > 0).
+
+.. code-block:: bash
+
+   # Full-year declaration
+   python main.py moms --from 20250101 --to 20251231
+
+   # Quarterly (Q1)
+   python main.py moms --from 20250101 --to 20250331
+
+
 ----
 
 bokslut

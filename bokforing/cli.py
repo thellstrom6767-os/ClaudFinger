@@ -1776,3 +1776,155 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar, series):
     click.echo()
 
 
+# ─── moms ────────────────────────────────────────────────────────────────────
+
+@cli.command('moms')
+@click.option('--from', 'from_date', required=True, metavar='YYYYMMDD',
+              help='Periodens startdatum (inklusivt).')
+@click.option('--to',   'to_date',   required=True, metavar='YYYYMMDD',
+              help='Periodens slutdatum (inklusivt).')
+@click.option('--series', default='A', show_default=True,
+              help='Verifikationsserie att använda.')
+@click.pass_context
+def moms_cmd(ctx, from_date, to_date, series):
+    """Beräkna momsdeklaration, visa rutorna och skapa redovisningsverifikation.
+
+    Summerar kontona 2610/2620/2630 (utgående moms) och 2640 (ingående moms)
+    för perioden. Varje ruta avrundas separat till närmaste hela krona
+    (ROUND_HALF_UP). Öresresten bokas på 3740.
+
+    Erbjuder att skapa en redovisningsverifikation som nollställer
+    momskontona mot 2650 (exakt deklarerat belopp) och 3740 (öresrest),
+    samt bifogar utskriften som underlag.
+    """
+    import tempfile
+    from .moms import berakna_moms
+
+    _Z = Decimal('0')
+    path = _resolve_ledger(ctx.obj)
+    sie = store_module.open_ledger(path)
+
+    m = berakna_moms(sie, from_date, to_date)
+
+    acct_map = sie.account_map()
+
+    def _label(nr: str) -> str:
+        a = acct_map.get(nr)
+        return f'  {a.label}' if a else ''
+
+    def _amt(v: Decimal) -> str:
+        return f'{v:>14,.2f}'
+
+    captured: list[str] = []
+
+    def _out(text: str = '') -> None:
+        captured.append(text)
+        click.echo(text)
+
+    W = 64
+    dbl = '═' * W
+    sep = '─' * W
+
+    header = f'Momsdeklaration — {sie.company_name}' if sie.company_name else 'Momsdeklaration'
+    _out()
+    _out(header)
+    _out(f'Period: {_fmt_date(from_date)} – {_fmt_date(to_date)}')
+    _out(dbl)
+    _out()
+
+    def _ruta(ruta: str, label: str, dec: Decimal, exact: Decimal) -> None:
+        exact_note = ''
+        if exact != _Z and exact != dec:
+            exact_note = f'   (exakt {exact:,.2f})'
+        _out(f'  Ruta {ruta:<4}  {label:<38}{_amt(dec)}{exact_note}')
+
+    for rate, ruta_base, ruta_moms, dec_base, base_exact, dec_moms, raw_moms, nr in [
+        ('25 %', '05', '10', m.dec_base_25, m.base_utg_25, m.dec_utg_25, m.raw_2610, '2610'),
+        ('12 %', '06', '11', m.dec_base_12, m.base_utg_12, m.dec_utg_12, m.raw_2620, '2620'),
+        (' 6 %', '07', '12', m.dec_base_6,  m.base_utg_6,  m.dec_utg_6,  m.raw_2630, '2630'),
+    ]:
+        _ruta(ruta_base, f'Momspliktig försäljning {rate}', dec_base, base_exact)
+        _ruta(ruta_moms, f'{nr}{_label(nr)}', dec_moms, abs(raw_moms))
+        _out()
+
+    _ruta('08', 'Momsfri försäljning', m.dec_base_momsfri, m.base_momsfri)
+    _out()
+    _out('  Ingående moms:')
+    _ruta('30', f'2640{_label("2640")}', m.dec_ing, abs(m.raw_2640))
+    _out()
+    _out(f'  {sep}')
+    netto_note = '   (att betala)' if m.dec_netto > _Z else ('   (återbetalning)' if m.dec_netto < _Z else '')
+    _out(f'  Ruta 49    {"Moms att betala / återfå":<38}{_amt(m.dec_netto)}{netto_note}')
+    _out()
+
+    no_activity = (m.dec_netto == _Z and m.amount_3740 == _Z
+                   and m.dec_base_momsfri == _Z)
+    if no_activity:
+        _out('  (Inga momstransaktioner i perioden.)')
+        _out()
+        return
+
+    def _vline(debet_kredit: str, nr: str, amount: Decimal, note: str = '') -> None:
+        note_str = f'   {note}' if note else ''
+        _out(f'  {debet_kredit:<6} {nr}{_label(nr):<36} {_amt(abs(amount))}{note_str}')
+
+    _out('  Föreslagen redovisningsverifikation:')
+    for nr, raw in [('2610', m.raw_2610), ('2620', m.raw_2620), ('2630', m.raw_2630)]:
+        if raw != _Z:
+            clearing = -raw
+            dk = 'Debet' if clearing > _Z else 'Kredit'
+            _vline(dk, nr, clearing)
+    if m.raw_2640 != _Z:
+        clearing_2640 = -m.raw_2640
+        dk = 'Debet' if clearing_2640 > _Z else 'Kredit'
+        _vline(dk, '2640', clearing_2640)
+    dk_2650 = 'Debet' if m.amount_2650 > _Z else 'Kredit'
+    _vline(dk_2650, '2650', m.amount_2650, 'avrundat deklarationsbelopp')
+    if m.amount_3740 != _Z:
+        dk_3740 = 'Debet' if m.amount_3740 > _Z else 'Kredit'
+        _vline(dk_3740, '3740', m.amount_3740, 'öresavrundning')
+    _out()
+
+    if click.confirm('Skapa verifikation?', default=True):
+        default_date = to_date
+        vdate = click.prompt('Datum (YYYYMMDD)', default=default_date)
+        period_str = f'{_fmt_date(from_date)}–{_fmt_date(to_date)}'
+        vlabel = click.prompt('Beskrivning', default=f'Momsredovisning {period_str}')
+
+        from .models import Voucher, Transaction
+        num = next_voucher_number(sie, series)
+        trans: list[Transaction] = []
+        for nr, raw in [('2610', m.raw_2610), ('2620', m.raw_2620), ('2630', m.raw_2630)]:
+            if raw != _Z:
+                trans.append(Transaction(account=nr, amount=-raw, date=vdate, label=vlabel))
+        if m.raw_2640 != _Z:
+            trans.append(Transaction(account='2640', amount=-m.raw_2640, date=vdate, label=vlabel))
+        trans.append(Transaction(account='2650', amount=m.amount_2650, date=vdate, label=vlabel))
+        if m.amount_3740 != _Z:
+            trans.append(Transaction(account='3740', amount=m.amount_3740, date=vdate, label=vlabel))
+
+        voucher = Voucher(
+            series=series,
+            number=num,
+            date=vdate,
+            label=vlabel,
+            reg_date=_today(),
+            signature='',
+            transactions=trans,
+        )
+        sie.vouchers.append(voucher)
+        store_module.save_ledger(path, sie)
+        click.echo(f'Sparad som {series}:{num}')
+
+        tmpdir = tempfile.mkdtemp()
+        tmp_path = os.path.join(tmpdir, f'momsdeklaration_{from_date}_{to_date}.txt')
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(captured))
+            stored = underlag_module.add_file(path, series, num, tmp_path)
+            click.echo(f'Underlag sparat: {stored}')
+        finally:
+            os.unlink(tmp_path)
+            os.rmdir(tmpdir)
+
+    click.echo()
