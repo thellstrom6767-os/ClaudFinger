@@ -8,21 +8,159 @@ Internal Storage Format
 Overview
 --------
 
-A ledger year in bokforing consists of up to four files that always share
+A ledger year in bokforing consists of up to three files that always share
 the same path stem:
 
 .. code-block:: text
 
-   ledger_2024.se               ← primary ledger (SIE 4, plain text, CP437)
-   ledger_2024_underlag/        ← binary supporting documents
-   ledger_2024_underlag.db      ← SQLite index for the underlag
+   ledger_2024_ledger.db        ← authoritative store (SQLite)
+   ledger_2024.se               ← export-only SIE 4 file (written by export/sie5export)
    ledger_2024.si5              ← optional SIE 5 archive (zip)
 
-The ``.se`` file is the single source of truth for accounting data.
-The underlag directory and database are optional companions; they exist
-only when documents have been attached.  The ``.si5`` archive is a
-derived artefact produced on demand by ``sie5export``; it can be
-deleted at any time and regenerated.
+``ledger_2024_ledger.db`` is the single source of truth.  It contains all
+accounting data (metadata, chart of accounts, balance entries, vouchers,
+transactions) **and** all supporting documents stored as BLOBs.  The ``.se``
+file is a derived artefact written only by the ``export`` and ``sie5export``
+commands; it is never read by the application after the initial migration.
+The ``.si5`` archive is also a derived artefact produced on demand by
+``sie5export``; it can be deleted at any time and regenerated.
+
+**Migration from the old format**
+
+When any command opens a ledger path that points to a ``.se`` file (or a
+``_ledger.db`` that does not yet exist), and no ``_ledger.db`` is present, the
+application auto-migrates:
+
+1. Parses the ``.se`` file into a ``SIEFile`` object.
+2. Creates the ``_ledger.db`` and writes all data (meta, accounts, balances,
+   vouchers, transactions).
+3. If a legacy ``_underlag.db`` / ``_underlag/`` pair exists, reads each file
+   from the directory, stores it as a BLOB in the new DB, then deletes both
+   the ``_underlag.db`` and ``_underlag/`` directory.
+4. The original ``.se`` file is **not** deleted; it remains as a backup.
+
+After migration, all subsequent commands use ``_ledger.db`` exclusively.
+
+
+SQLite Ledger File (``_ledger.db``)
+------------------------------------
+
+Naming and path
+~~~~~~~~~~~~~~~
+
+The DB file is always named ``{stem}_ledger.db`` where ``{stem}`` is the
+path stem of the associated ``.se`` file.  Examples:
+
+.. code-block:: text
+
+   ledger_2024.se               → ledger_2024_ledger.db
+   Retsina_Consulting_AB_2023.se → Retsina_Consulting_AB_2023_ledger.db
+
+Both path forms are accepted by all commands and the ``--ledger`` option.
+
+Schema
+~~~~~~
+
+.. code-block:: sql
+
+   CREATE TABLE meta (
+       key   TEXT PRIMARY KEY,
+       value TEXT NOT NULL DEFAULT ''
+   );
+
+   CREATE TABLE accounts (
+       number TEXT PRIMARY KEY,
+       label  TEXT NOT NULL DEFAULT '',
+       ktyp   TEXT,
+       sru    TEXT NOT NULL DEFAULT '[]'  -- JSON array of SRU code strings
+   );
+
+   CREATE TABLE balances (
+       type    TEXT NOT NULL,             -- 'IB', 'UB', or 'RES'
+       account TEXT NOT NULL,
+       amount  TEXT NOT NULL,             -- Decimal as plain string
+       PRIMARY KEY (type, account)
+   );
+
+   CREATE TABLE vouchers (
+       id        INTEGER PRIMARY KEY AUTOINCREMENT,
+       series    TEXT    NOT NULL,
+       number    INTEGER NOT NULL,
+       date      TEXT    NOT NULL DEFAULT '',
+       label     TEXT    NOT NULL DEFAULT '',
+       reg_date  TEXT    NOT NULL DEFAULT '',
+       signature TEXT    NOT NULL DEFAULT '',
+       UNIQUE(series, number)
+   );
+
+   CREATE TABLE transactions (
+       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+       voucher_id INTEGER NOT NULL REFERENCES vouchers(id),
+       seq        INTEGER NOT NULL,
+       account    TEXT    NOT NULL,
+       amount     TEXT    NOT NULL,       -- Decimal as plain string
+       date       TEXT    NOT NULL DEFAULT '',
+       label      TEXT    NOT NULL DEFAULT ''
+   );
+
+   CREATE TABLE underlag (
+       id            INTEGER PRIMARY KEY AUTOINCREMENT,
+       series        TEXT NOT NULL,
+       number        INTEGER NOT NULL,
+       original_name TEXT NOT NULL,
+       added_at      TEXT NOT NULL,       -- ISO date (YYYY-MM-DD)
+       data          BLOB NOT NULL
+   );
+
+The ``meta`` table stores the ``SIEFile`` header fields as key/value pairs
+(``program``, ``program_version``, ``gen_date``, ``gen_author``, ``org_nr``,
+``company_name``, ``contact``, ``street``, ``zip_city``, ``phone``,
+``year_begins``, ``year_ends``, ``currency``).
+
+The ``sru`` column in ``accounts`` is a JSON array of SRU code strings
+(``["7281"]`` or ``[]`` for accounts with no SRU mapping).
+
+Amounts in ``balances`` and ``transactions`` are stored as plain decimal
+strings (``"19058.02"``) to preserve exact precision without floating-point
+error.
+
+Atomic writes
+~~~~~~~~~~~~~
+
+``store.save_ledger()`` wraps all DELETE + INSERT operations in a single
+SQLite transaction (``BEGIN`` … ``COMMIT`` / ``ROLLBACK``).  A crash at any
+point leaves the database either fully intact or fully updated — the ``underlag``
+table is never touched by ``save_ledger``; its rows are managed separately by
+the ``underlag`` module.
+
+WAL mode
+~~~~~~~~
+
+All connections open with ``PRAGMA journal_mode=WAL``.  WAL gives safe
+concurrent reads while a write is in progress, which matters if the
+balance/list/verify commands are run while an add is underway in another
+terminal.
+
+Underlag — BLOB storage
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Supporting documents are stored directly in the ``underlag`` table as raw
+binary BLOBs.  There is no ``filename`` column; the **Verifikation naming
+convention** is derived on-the-fly from the insertion order within each
+``(series, number)`` group:
+
+.. code-block:: text
+
+   single file  → Verifikation_{series}{number}.{ext}
+   i-th of n    → Verifikation_{series}{number}[{i}av{n}].{ext}
+
+This derived name is returned by ``list_for_voucher`` in the ``filename``
+field and is used when exporting to ``_underlag/`` or embedding in SIE 5.
+
+The ``export`` command and ``sie5export`` write the BLOBs to disk using
+this convention.  The ``underlag open`` command extracts a BLOB to
+``/tmp/bokforing_underlag/{id}_{original_name}`` and opens it with
+``xdg-open``.
 
 
 SIE 4 Ledger File (``.se``)
@@ -185,19 +323,15 @@ SIE 5 archive.
 Underlag Store
 --------------
 
-Directory layout
-~~~~~~~~~~~~~~~~
+Documents are stored as BLOBs in the ``underlag`` table of ``_ledger.db``
+(see schema above).  There is no separate ``_underlag/`` directory during
+normal operation; files are extracted to disk only on explicit request.
 
-.. code-block:: text
+Verifikation naming convention
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-   ledger_2024_underlag/
-   ├── Verifikation_A1.pdf
-   ├── Verifikation_A5[1av2].pdf
-   ├── Verifikation_A5[2av2].pdf
-   └── Verifikation_A20.jpg
-
-The directory name is always the ledger file stem followed by
-``_underlag``.  Files are named using the **Verifikation** convention:
+The same naming convention applies whether files are on disk (after
+export) or displayed in ``underlag list``:
 
 .. code-block:: text
 
@@ -205,45 +339,36 @@ The directory name is always the ledger file stem followed by
    Verifikation_{series}{number}[1av{n}].{ext}   ← first of n files
    Verifikation_{series}{number}[{i}av{n}].{ext} ← i-th of n files
 
-When a second file is added to a voucher that previously had only one,
-the existing file is renamed automatically from the single-file form to
-``[1av2]``, and the new file is placed as ``[2av2]``.  The SQLite
-database is updated in the same transaction.
+The name is derived from the insertion order of rows with the same
+``(series, number)``.  The ``filename`` key returned by
+``list_for_voucher`` reflects this computed name.
 
-SQLite schema
-~~~~~~~~~~~~~
+Export
+~~~~~~
 
-Database file: ``ledger_2024_underlag.db``
+The ``export`` command writes the current state of the ledger to a ``.se``
+file and, if any underlag is present, an ``_underlag/`` directory alongside
+it using the Verifikation naming convention:
 
-.. code-block:: sql
+.. code-block:: text
 
-   CREATE TABLE underlag (
-       id            INTEGER PRIMARY KEY AUTOINCREMENT,
-       series        TEXT    NOT NULL,
-       number        INTEGER NOT NULL,
-       filename      TEXT    NOT NULL,   -- stored name in the directory
-       original_name TEXT    NOT NULL,   -- name of the file as supplied
-       added_at      TEXT    NOT NULL    -- ISO date (YYYY-MM-DD)
-   );
+   ledger_2024.se               ← generated by 'export'
+   ledger_2024_underlag/        ← written alongside the .se file
+   ├── Verifikation_A1.pdf
+   ├── Verifikation_A5[1av2].pdf
+   └── Verifikation_A5[2av2].pdf
 
-The ``filename`` column is updated whenever the file is renamed due to
-a change in the total count for a voucher.  The ``original_name``
-column is immutable and preserves the name of the source file at the
-time it was added.
-
-The database is the authoritative index.  If a file exists on disk but
-has no row in ``underlag`` it is not considered part of the store.  If
-a row exists but the file has been deleted outside the application,
-``underlag open`` will silently skip it.
+This directory is not kept in sync with the DB automatically; it is a
+point-in-time snapshot written by ``export`` or ``sie5export``.
 
 Relationship to the SIE 4 file
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The underlag store is a *companion* to the ledger; the SIE 4 file
-contains no reference to supporting documents.  The link between a
-voucher (series + number) and its documents exists only in the SQLite
-database.  When a SIE 5 package is exported these links are used to
-embed ``DocumentReference`` elements in the XML.
+The ``.se`` file is an export artefact and contains no reference to
+supporting documents.  The link between a voucher and its documents
+lives entirely in the ``underlag`` table of ``_ledger.db``.  When a
+SIE 5 package is exported, these links are used to embed
+``DocumentReference`` elements in the XML.
 
 
 SIE 5 Package (``.si5``)
@@ -367,15 +492,12 @@ not altered.
 
 **Underlag renaming**
 
-Because voucher numbers change, any underlag files must be renamed to
-stay linked to the correct vouchers.  The ``renumber_vouchers`` function
-in ``underlag.py`` performs a two-pass rename to avoid collisions when
-old and new numbers overlap:
-
-1. All affected files are renamed to ``__sort_tmp_{db_id}.ext``.
-2. The SQLite rows are updated with the new ``(series, number)`` values.
-3. Files are renamed from the temp names to their final
-   ``Verifikation_A{n}[…]`` form via ``_rename_to_reflect_total``.
+Because underlag is stored as BLOBs in ``_ledger.db``, renumbering
+requires only a single SQL ``UPDATE`` on the ``underlag`` table.  No
+file renames or two-pass strategies are needed.  The
+``renumber_vouchers`` function in ``underlag.py`` issues one
+``UPDATE underlag SET series=?, number=? WHERE series=? AND number=?``
+per mapping entry and commits.
 
 **Integrity**
 
@@ -521,11 +643,15 @@ use **UTF-8**.  No conversion is needed for document filenames.
 Backup recommendations
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The ``.se`` file is the only file that needs to be backed up to
-preserve accounting data.  It is plain text and compresses well.  The
-underlag directory and SQLite database should be backed up alongside it
-if the original source documents are not retained elsewhere.
+The ``_ledger.db`` file is the only file that needs to be backed up to
+preserve all accounting data and supporting documents.  It is a standard
+SQLite binary and compresses well (WAL mode writes are already sequential).
 
-A SIE 5 export (``sie5export``) produces a single archive that
-contains both the ledger data and all attached documents; it is a
-convenient single-file backup artefact.
+A SIE 5 export (``sie5export``) produces a single ``.si5`` archive that
+contains the ledger data (as XML) and all embedded documents; it is a
+convenient single-file backup artefact and can be used to restore a ledger
+with ``sie5import``.
+
+The ``export`` command writes a ``ledger_YYYY.se`` + ``_underlag/``
+snapshot suitable for exchange with SIE 4-only tools or long-term archiving
+alongside the DB.

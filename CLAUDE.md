@@ -3,9 +3,9 @@
 ## Project overview
 
 CLI accounting application for Retsina Consulting AB (Swedish AB).
-Primary storage is SIE 4 plain-text ledger files (`*.se`, CP437 encoded).
-Companion stores: underlag directory + SQLite database for binary supporting
-documents, and SIE 5 zip packages for archiving/exchange.
+Primary storage is SQLite (`*_ledger.db`). SIE 4 `.se` files are export-only
+(written by `bokforing export`; original `.se` kept as backup after migration).
+SIE 5 zip packages are used for archiving/exchange.
 
 ## Documentation rule
 
@@ -27,11 +27,12 @@ update in the same commit.
 bokforing/
     __init__.py
     models.py       — dataclasses: SIEFile, Voucher, Transaction, Account
-    sie.py          — SIE 4 parser and writer (CP437, append-only)
+    store.py        — authoritative DB layer: open_ledger, save_ledger, export_sie, db_path
+    sie.py          — SIE 4 parser and writer (CP437); used for migration/export only
     ledger.py       — balance computation, account lookup, year init
     reports.py      — Resultatrapport and Balansrapport ODS generators
     sie5.py         — SIE 5 export (generate_sie5) and import (restore_from_sie5)
-    underlag.py     — binary document store (directory + SQLite)
+    underlag.py     — binary document BLOB store (SQLite-backed via store.db_path)
     cli.py          — Click CLI: all commands
 main.py             — entry point
 Documentation/
@@ -39,6 +40,18 @@ Documentation/
     storage_format.rst
 requirements.txt    — click>=8.0, odfpy>=1.4
 ```
+
+## Storage architecture
+
+- `store.open_ledger(path)` is the single entry point for reading a ledger.
+  On first call against a `.se` path it auto-migrates: parses `.se`, creates
+  `_ledger.db`, ingests underlag BLOBs, deletes old `_underlag.db` and dir.
+- `store.save_ledger(path, sie)` is the single entry point for writing.
+  Uses a `BEGIN/COMMIT` SQLite transaction; underlag rows are untouched.
+- `store.export_sie(path, out)` writes a `.se` file and a `_underlag/` dir.
+- Underlag documents are stored as BLOBs in the `underlag` table.
+  The `_underlag/` directory is only written during `export`.
+- `store.db_path(p)` normalises any `.se` or `_ledger.db` path to `_ledger.db`.
 
 ## Encoding
 
@@ -60,17 +73,15 @@ positive, costs → negative). The `balansrapport` preserves SIE signs as-is.
 Do not change either convention without updating both the code and the
 storage_format.rst sign-convention sections.
 
-## Atomic writes
-
-`sie.append_voucher` must remain atomic: write to `.se.tmp`, then
-`os.replace`. Never append directly to the live file.
-
 ## Key constraints
 
 - `ledger.init_from_previous` must only carry forward accounts 1000–2999.
   Income/expense accounts (3000–8999) always reset to zero each year.
-- `underlag.py` naming: single file → `Verifikation_A{n}.{ext}`, multiple
-  → `Verifikation_A{n}[{i}av{total}].{ext}`. Renaming on total change is
-  handled by `_rename_to_reflect_total`; preserve this behaviour.
+- `underlag.py` naming: single file → `Verifikation_{S}{n}.{ext}`, multiple
+  → `Verifikation_{S}{n}[{i}av{total}].{ext}`. The filename is derived at
+  query time from seq/total; there is no filename column in the DB.
 - SIE 5 round-trip: SRU codes are not carried. Document this whenever
   sie5import is described or modified.
+- arsredovisning tool uses `sie_module.parse()` directly on the `.se` file.
+  Run `bokforing export` to get an up-to-date `.se` before generating
+  årsredovisning.

@@ -143,18 +143,6 @@ def _format_voucher(v: Voucher) -> str:
     return '\n'.join(lines)
 
 
-def append_voucher(path: str, voucher: Voucher) -> None:
-    """Append a voucher to an existing SIE file atomically."""
-    tmp = path + '.tmp'
-    with open(path, 'rb') as f:
-        content = f.read()
-    addition = ('\n' + _format_voucher(voucher) + '\n').encode(ENCODING, errors='replace')
-    with open(tmp, 'wb') as f:
-        f.write(content)
-        f.write(addition)
-    os.replace(tmp, path)
-
-
 def write(path: str, sie: SIEFile) -> None:
     """Write a complete SIE 4 file."""
     today = _today()

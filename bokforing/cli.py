@@ -12,6 +12,7 @@ import click
 
 from . import underlag as underlag_module
 from . import samples as samples_module
+from . import store as store_module
 from .reports import generate_balansrapport, generate_resultatrapport
 
 from . import sie as sie_module
@@ -44,25 +45,27 @@ def _resolve_ledger(ctx_obj: dict) -> str:
     path = ctx_obj.get('ledger')
     if path:
         return path
-    files = glob.glob('*.se')
+    files = glob.glob('*_ledger.db')
+    if not files:
+        files = glob.glob('*.se')
     if len(files) == 1:
         return files[0]
     if len(files) > 1:
-        click.echo('Multiple .se files found. Specify one with --ledger:', err=True)
+        click.echo('Multiple ledger files found. Specify one with --ledger:', err=True)
         for f in sorted(files):
             click.echo(f'  {f}', err=True)
     else:
-        click.echo('No .se ledger file found in current directory.', err=True)
-        click.echo('Use: bokforing init --from-sie <previous.se> <year>', err=True)
+        click.echo('No ledger file found in current directory.', err=True)
+        click.echo('Use: bokforing init --from-sie <previous_ledger.db> <year>', err=True)
     sys.exit(1)
 
 
 @click.group()
 @click.option('--ledger', '-l', default=None, metavar='FILE',
-              help='SIE ledger file (auto-detected if not set)')
+              help='Ledger DB or .se path (auto-detected if not set)')
 @click.pass_context
 def cli(ctx, ledger):
-    """Bokforing — CLI accounting backed by SIE 4 files."""
+    """Bokforing — CLI double-entry accounting."""
     ctx.ensure_object(dict)
     ctx.obj['ledger'] = ledger
 
@@ -72,30 +75,32 @@ def cli(ctx, ledger):
 @cli.command()
 @click.argument('year', type=int)
 @click.option('--from-sie', '-f', required=True, metavar='FILE',
-              help='Previous year SIE file to carry balances from')
+              help='Previous year ledger (_ledger.db or .se) to carry balances from')
 @click.option('--output', '-o', default=None, metavar='FILE',
-              help='Output filename (default: ledger_YYYY.se)')
+              help='Output path stem (default: ledger_YYYY.se → creates ledger_YYYY_ledger.db)')
 def init(year, from_sie, output):
     """Create a new ledger year from a previous year's closing balances.
 
-    Example: bokforing init 2024 --from-sie ../retsinaconsultingab_2023.se
+    Example: bokforing init 2024 --from-sie ledger_2023_ledger.db
     """
     if not os.path.exists(from_sie):
         click.echo(f'Error: {from_sie} not found', err=True)
         sys.exit(1)
 
-    prev = sie_module.parse(from_sie)
+    prev = store_module.open_ledger(from_sie)
     new_sie, source = init_from_previous(prev, f'{year}0101', f'{year}1231')
 
     if output is None:
         output = f'ledger_{year}.se'
 
-    if os.path.exists(output):
-        if not click.confirm(f'{output} already exists. Overwrite?', default=False):
+    db_out = store_module.db_path(output)
+    if os.path.exists(db_out):
+        if not click.confirm(f'{os.path.basename(db_out)} already exists. Overwrite?',
+                             default=False):
             click.echo('Aborted.')
             return
 
-    sie_module.write(output, new_sie)
+    store_module.save_ledger(output, new_sie)
 
     # Summarise the opening balance sheet
     assets = sum(v for k, v in new_sie.ib.items()
@@ -104,7 +109,7 @@ def init(year, from_sie, output):
                  if k.isdigit() and 2000 <= int(k) < 3000)
     diff = assets + equity
 
-    click.echo(f'Created {output}')
+    click.echo(f'Created {db_out}')
     click.echo(f'  Company : {new_sie.company_name}  ({new_sie.org_nr})')
     click.echo(f'  Period  : {year}-01-01 – {year}-12-31')
     click.echo(f'  Source  : {from_sie}  ({source})')
@@ -124,10 +129,10 @@ def init(year, from_sie, output):
 def add(ctx):
     """Add a new voucher interactively."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     account_map = sie.account_map()
 
-    click.echo(f'\nAdding voucher to {path}')
+    click.echo(f'\nAdding voucher to {os.path.basename(store_module.db_path(path))}')
 
     vdate = click.prompt('Date (YYYYMMDD)', default=_today())
     label = click.prompt('Description')
@@ -194,8 +199,9 @@ def add(ctx):
     num = next_voucher_number(sie)
     voucher = Voucher(series='A', number=num, date=vdate, label=label,
                       reg_date=_today(), signature='', transactions=transactions)
-    sie_module.append_voucher(path, voucher)
-    click.echo(f'Saved as A:{num} in {path}')
+    sie.vouchers.append(voucher)
+    store_module.save_ledger(path, sie)
+    click.echo(f'Saved as A:{num} in {os.path.basename(store_module.db_path(path))}')
 
 
 # ─── balance ─────────────────────────────────────────────────────────────────
@@ -209,7 +215,7 @@ def balance(ctx, filter):
     Optionally filter by account number prefix, e.g. 'balance 1' for assets.
     """
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     balances = get_balances(sie)
     account_map = sie.account_map()
 
@@ -260,7 +266,7 @@ def balance(ctx, filter):
 def list_vouchers(ctx, n, show_all):
     """List vouchers."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     vouchers = sie.vouchers if show_all else sie.vouchers[-n:]
     total = len(sie.vouchers)
@@ -284,7 +290,7 @@ def list_vouchers(ctx, n, show_all):
 def show(ctx, ref):
     """Show voucher details. REF format: A:5 or just 5 (defaults to series A)."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     series, num_str = (ref.split(':', 1) if ':' in ref else ('A', ref))
@@ -330,7 +336,7 @@ def delete_voucher_cmd(ctx, ref, dry_run):
     as sort.  Label references to renumbered vouchers can be updated automatically.
     """
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     series, num_str = (ref.split(':', 1) if ':' in ref else ('A', ref))
@@ -427,7 +433,7 @@ def delete_voucher_cmd(ctx, ref, dry_run):
             obj.label = new
 
     n_underlag = underlag_module.remove_all_for_voucher(path, series, num)
-    sie_module.write(path, new_sie)
+    store_module.save_ledger(path, new_sie)
     n_files = underlag_module.renumber_vouchers(path, renumber_map)
 
     click.echo('Done.')
@@ -450,7 +456,7 @@ def delete_voucher_cmd(ctx, ref, dry_run):
 def history(ctx, account):
     """Show transaction history and running balance for an account."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     acc = find_account(sie, account)
     acct_nr = acc.number if acc else account
@@ -484,7 +490,7 @@ def history(ctx, account):
 def verify(ctx):
     """Verify that all vouchers balance (transactions sum to zero)."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     errors = [(v, v.total()) for v in sie.vouchers if v.total() != 0]
 
@@ -619,7 +625,7 @@ def scan(ctx, file, attach, series):
 
     path = ctx.obj.get('ledger') if ctx.obj else None
     path = path or _resolve_ledger(ctx.obj)
-    sie  = sie_module.parse(path)
+    sie  = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     samples = samples_module.list_samples(path)
@@ -696,8 +702,9 @@ def scan(ctx, file, attach, series):
             for t in txns
         ],
     )
-    sie_module.append_voucher(path, voucher)
-    click.echo(f'Saved as {series}:{num} in {os.path.basename(path)}')
+    sie.vouchers.append(voucher)
+    store_module.save_ledger(path, sie)
+    click.echo(f'Saved as {series}:{num} in {os.path.basename(store_module.db_path(path))}')
 
     if attach:
         stored = underlag_module.add_file(path, series, num, file)
@@ -734,7 +741,7 @@ def skattekonto_cmd(ctx, csv_file, from_date, to_date, series):
     from decimal import Decimal
 
     path = _resolve_ledger(ctx.obj)
-    sie  = sie_module.parse(path)
+    sie  = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     # ── Parse CSV ─────────────────────────────────────────────────────────
@@ -853,9 +860,9 @@ def skattekonto_cmd(ctx, csv_file, from_date, to_date, series):
                 for t in txns
             ],
         )
-        sie_module.append_voucher(path, voucher)
-        # Re-parse so next_voucher_number is correct for the next iteration
-        sie = sie_module.parse(path)
+        sie.vouchers.append(voucher)
+        store_module.save_ledger(path, sie)
+        sie = store_module.open_ledger(path)
         saved += 1
         click.echo(f'Saved as {series}:{num}')
 
@@ -916,7 +923,7 @@ def sort_cmd(ctx, sort_by, dry_run):
     append-only and never renumbers existing vouchers.
     """
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     key = 'reg_date' if sort_by == 'registration-date' else 'date'
     new_sie, renumber_map = sort_vouchers(sie, key=key)
@@ -971,7 +978,7 @@ def sort_cmd(ctx, sort_by, dry_run):
             else:
                 obj.label = new
 
-    sie_module.write(path, new_sie)
+    store_module.save_ledger(path, new_sie)
 
     n_files = underlag_module.renumber_vouchers(path, renumber_map)
 
@@ -983,25 +990,55 @@ def sort_cmd(ctx, sort_by, dry_run):
         click.echo(f'  {len(ref_changes)} label reference(s) updated')
 
 
+# ─── export ──────────────────────────────────────────────────────────────────
+
+@cli.command('export')
+@click.option('--output', '-o', default=None, metavar='FILE',
+              help='Output .se file (default: ledger_YYYY.se alongside the DB)')
+@click.pass_context
+def export_cmd(ctx, output):
+    """Export the ledger to a SIE 4 .se file with a companion _underlag/ directory.
+
+    Writes a plain-text SIE 4 file and, if underlag is present, a _underlag/
+    directory with all attached supporting documents using the Verifikation
+    naming convention.  Useful for sharing with external tools or archiving.
+    """
+    path = _resolve_ledger(ctx.obj)
+    db_p = store_module.db_path(path)
+
+    if output is None:
+        base = db_p[:-len('_ledger.db')]
+        output = base + '.se'
+
+    store_module.export_sie(path, output)
+
+    base = os.path.splitext(os.path.abspath(output))[0]
+    underlag_dir = base + '_underlag'
+    n_files = len(os.listdir(underlag_dir)) if os.path.isdir(underlag_dir) else 0
+    click.echo(f'Exported {output}')
+    if n_files:
+        click.echo(f'  {n_files} underlag file(s) → {os.path.basename(underlag_dir)}/')
+
+
 # ─── report ──────────────────────────────────────────────────────────────────
 
 @cli.command()
 @click.option('--prev-sie', '-p', default=None, metavar='FILE',
-              help='Previous year SIE file for comparison column')
+              help='Previous year ledger for comparison column')
 @click.option('--output', '-o', default=None, metavar='FILE',
               help='Output .ods file (default: Resultatrapport_YYYY-MM-DD-YYYY-MM-DD.ods)')
 @click.pass_context
 def report(ctx, prev_sie, output):
     """Generate a Resultatrapport (income statement) as a LibreOffice ODS file."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     prev = None
     if prev_sie:
         if not os.path.exists(prev_sie):
             click.echo(f'Error: {prev_sie} not found', err=True)
             sys.exit(1)
-        prev = sie_module.parse(prev_sie)
+        prev = store_module.open_ledger(prev_sie)
 
     if output is None:
         b = f'{sie.year_begins[:4]}-{sie.year_begins[4:6]}-{sie.year_begins[6:]}'
@@ -1023,7 +1060,7 @@ def report(ctx, prev_sie, output):
 def balansrapport(ctx, output):
     """Generate a Balansrapport (balance sheet) as a LibreOffice ODS file."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     if output is None:
         b = f'{sie.year_begins[:4]}-{sie.year_begins[4:6]}-{sie.year_begins[6:]}'
@@ -1050,7 +1087,7 @@ def sie5export(ctx, output):
     from .sie5 import generate_sie5
 
     path = _resolve_ledger(ctx.obj)
-    sie  = sie_module.parse(path)
+    sie  = store_module.open_ledger(path)
 
     if output is None:
         b     = f'{sie.year_begins[:4]}-{sie.year_begins[4:6]}-{sie.year_begins[6:]}'
@@ -1071,16 +1108,16 @@ def sie5export(ctx, output):
 @cli.command('sie5import')
 @click.argument('si5_file', type=click.Path(exists=True))
 @click.option('--output', '-o', default=None, metavar='FILE',
-              help='Output .se file (default: derived from company name and year)')
+              help='Output path stem (default: derived from company name and year)')
 @click.pass_context
 def sie5import(ctx, si5_file, output):
     """Restore a ledger year from a SIE 5 package (.si5).
 
-    Writes a SIE 4 .se file and repopulates the underlag store with any
-    documents embedded in the package.
+    Creates a _ledger.db with all accounting data and embedded supporting
+    documents from the package.
 
     Note: #SRU codes are not stored in SIE 5 and will not be present
-    in the restored SIE 4 file.
+    in the restored ledger.
     """
     from .sie5 import restore_from_sie5
 
@@ -1098,14 +1135,16 @@ def sie5import(ctx, si5_file, output):
         output = os.path.join(os.path.dirname(os.path.abspath(si5_file)),
                               f'{stem}_{_yr}.se' if _yr else f'{stem}.se')
 
-    if os.path.exists(output):
-        if not click.confirm(f'{output} already exists. Overwrite?', default=False):
+    db_out = store_module.db_path(output)
+    if os.path.exists(db_out):
+        if not click.confirm(f'{os.path.basename(db_out)} already exists. Overwrite?',
+                             default=False):
             click.echo('Aborted.')
             return
 
     sie, n_docs = restore_from_sie5(si5_file, output)
 
-    click.echo(f'Restored {output}')
+    click.echo(f'Restored {db_out}')
     click.echo(f'  Company : {sie.company_name}  ({sie.org_nr})')
     click.echo(f'  Period  : {_fmt_date(sie.year_begins)} – {_fmt_date(sie.year_ends)}')
     click.echo(f'  Accounts: {len(sie.accounts)}  |  Vouchers: {len(sie.vouchers)}')
@@ -1135,7 +1174,7 @@ def sample_add(ctx):
     from decimal import Decimal, InvalidOperation
 
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     click.echo('\nAdding sample voucher')
@@ -1234,7 +1273,7 @@ def sample_list(ctx):
 def sample_show(ctx, sample_id):
     """Show details of a sample voucher. SAMPLE_ID is the numeric ID."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     s = samples_module.get_sample(path, sample_id)
@@ -1260,7 +1299,7 @@ def sample_show(ctx, sample_id):
 def sample_from_voucher(ctx, ref):
     """Add a sample by copying an existing voucher. REF format: A:5 or 5."""
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
     account_map = sie.account_map()
 
     series, num_str = (ref.split(':', 1) if ':' in ref else ('A', ref))
@@ -1343,7 +1382,7 @@ def accounts_list(ctx, prefix):
     from . import bas as bas_module
 
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     accounts = sorted(sie.accounts, key=lambda a: a.number)
     if prefix:
@@ -1376,7 +1415,7 @@ def accounts_add(ctx, number):
     from .models import Account
 
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     if any(a.number == number for a in sie.accounts):
         click.echo(f'Account {number} already exists in the chart of accounts.', err=True)
@@ -1406,8 +1445,8 @@ def accounts_add(ctx, number):
     idx = bisect.bisect_left(numbers, number)
     sie.accounts.insert(idx, new_acc)
 
-    sie_module.write(path, sie)
-    click.echo(f'Added {number} "{name}" to {os.path.basename(path)}')
+    store_module.save_ledger(path, sie)
+    click.echo(f'Added {number} "{name}" to {os.path.basename(store_module.db_path(path))}')
 
 
 @accounts_group.command('rename')
@@ -1422,7 +1461,7 @@ def accounts_rename(ctx, number):
     from . import bas as bas_module
 
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     acc = next((a for a in sie.accounts if a.number == number), None)
     if acc is None:
@@ -1452,8 +1491,8 @@ def accounts_rename(ctx, number):
         return
 
     acc.label = new_name
-    sie_module.write(path, sie)
-    click.echo(f'Renamed {number} in {os.path.basename(path)}')
+    store_module.save_ledger(path, sie)
+    click.echo(f'Renamed {number} in {os.path.basename(store_module.db_path(path))}')
 
 
 # ─── underlag ────────────────────────────────────────────────────────────────
@@ -1507,7 +1546,6 @@ def underlag_list(ctx, ref):
     With REF (e.g. A:5): list files for that specific voucher.
     """
     path = _resolve_ledger(ctx.obj)
-    _, db_path = underlag_module._paths(path)
 
     if ref:
         series, number = _parse_ref(ref)
@@ -1547,11 +1585,13 @@ def underlag_open(ctx, ref):
         click.echo(f'No underlag for {series}:{number}.')
         return
 
-    underlag_dir, _ = underlag_module._paths(path)
     for f in files:
-        filepath = os.path.join(underlag_dir, f['filename'])
-        click.echo(f'Opening {f["filename"]} …')
-        subprocess.Popen(['xdg-open', filepath])
+        tmp_path = underlag_module.open_file(path, f['id'])
+        if tmp_path:
+            click.echo(f'Opening {f["original_name"]} …')
+            subprocess.Popen(['xdg-open', tmp_path])
+        else:
+            click.echo(f'Could not read file id {f["id"]}.', err=True)
 
 
 @underlag.command('remove')
@@ -1596,7 +1636,7 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar, series):
     from .skatt import berakna_skatt
 
     path = _resolve_ledger(ctx.obj)
-    sie = sie_module.parse(path)
+    sie = store_module.open_ledger(path)
 
     try:
         sats = Decimal(skattesats)
@@ -1715,7 +1755,8 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar, series):
                                 date=vdate, label=vlabel),
                 ],
             )
-            sie_module.append_voucher(path, voucher)
+            sie.vouchers.append(voucher)
+            store_module.save_ledger(path, sie)
             click.echo(f'Sparad som {series}:{num}')
 
             tmpdir = tempfile.mkdtemp()
@@ -1733,3 +1774,5 @@ def bokslut_skatt(ctx, skattesats, statslanerantan, konto_ar, series):
         click.echo('  (Skattemässigt underskott – ingen bolagsskatt detta år)')
 
     click.echo()
+
+

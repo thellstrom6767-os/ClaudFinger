@@ -8,10 +8,10 @@ Command Reference
 Overview
 --------
 
-**bokforing** is a command-line accounting tool backed by SIE 4 files.
-Every command operates on a *ledger file* — a ``.se`` file in the
-current directory — plus an optional companion underlag store that holds
-binary supporting documents.
+**bokforing** is a command-line accounting tool backed by a SQLite ledger
+database.  Every command operates on a *ledger file* — a
+``ledger_YYYY_ledger.db`` file in the current directory.  Supporting
+documents (underlag) are stored as BLOBs inside the same database.
 
 Invocation
 ~~~~~~~~~~
@@ -20,15 +20,21 @@ Invocation
 
    python main.py [--ledger FILE] COMMAND [OPTIONS] [ARGS]
 
-The global ``--ledger`` / ``-l`` option selects which ``.se`` file to
-operate on.  If omitted the program looks for a single ``.se`` file in
-the current directory and uses it automatically.  When more than one is
-present you must supply ``--ledger`` explicitly.
+The global ``--ledger`` / ``-l`` option selects which ledger file to
+operate on.  If omitted the program auto-detects the ledger:
+
+1. Looks for a single ``*_ledger.db`` file in the current directory.
+2. If none is found, falls back to a single ``*.se`` file and
+   auto-migrates it to ``_ledger.db`` on first use.
+
+When more than one ledger file is found you must supply ``--ledger``
+explicitly.
 
 .. code-block:: bash
 
-   python main.py -l path/to/ledger_2024.se balance
-   python main.py balance                       # auto-detects if only one .se
+   python main.py -l ledger_2024_ledger.db balance
+   python main.py -l path/to/ledger_2024.se balance   # also accepted
+   python main.py balance                              # auto-detects if only one
 
 
 Global options
@@ -36,8 +42,9 @@ Global options
 
 .. option:: -l FILE, --ledger FILE
 
-   Path to the SIE 4 ledger file.  Auto-detected when the current
-   directory contains exactly one ``*.se`` file.
+   Path to the ledger DB (``_ledger.db``) or a ``.se`` path (translated
+   to the corresponding ``_ledger.db`` automatically).  Auto-detected
+   when the current directory contains exactly one ``*_ledger.db`` file.
 
 
 ----
@@ -230,6 +237,8 @@ Moms …                         2650                     1630
    # Process Q1 only
    python main.py skattekonto skattekonto.csv --from 2025-01-01 --to 2025-03-31
 
+
+----
 
 bokslut
 ~~~~~~~
@@ -430,13 +439,14 @@ previous year.
 
 .. option:: -f FILE, --from-sie FILE  *(required)*
 
-   The SIE file for the previous year whose closing balances become
-   the opening balances of the new year.
+   The previous year's ledger (``_ledger.db`` or ``.se``) whose closing
+   balances become the opening balances of the new year.
 
 .. option:: -o FILE, --output FILE
 
-   Path for the new ledger file.  Defaults to ``ledger_YYYY.se`` in
-   the current directory.
+   Path stem for the new ledger.  Accepts either ``ledger_YYYY.se``
+   or ``ledger_YYYY_ledger.db`` form.  Default: ``ledger_YYYY.se``
+   (the DB is created as ``ledger_YYYY_ledger.db``).
 
 **Behaviour**
 
@@ -472,7 +482,7 @@ in red.
 
 .. code-block:: text
 
-   Created ledger_2024.se
+   Created ledger_2024_ledger.db
      Company : Retsina Consulting AB  (556927-9168)
      Period  : 2024-01-01 – 2024-12-31
      Source  : retsinaconsultingab_2023.se  (#UB entries (closed year))
@@ -633,11 +643,10 @@ case-insensitive substring of the account label.
      1941      -738.75
    ──────────────────────────────────────────────────────
    Save? [Y/n]:
-   Saved as A:31 in ledger_2024.se
+   Saved as A:31 in ledger_2024_ledger.db
 
-The voucher is appended to the SIE file atomically (written to a
-temporary file and then renamed) so a crash mid-write cannot corrupt
-the existing data.
+The voucher is written to the SQLite DB inside an ACID transaction so
+a crash mid-write cannot corrupt the existing data.
 
 An unbalanced voucher (transactions not summing to zero) will trigger a
 warning and a confirmation prompt before saving.  Unbalanced vouchers
@@ -676,14 +685,9 @@ attached underlag files to match the new numbers.
 Within each voucher series, vouchers are sorted by the chosen date
 (stable sort — vouchers with the same date retain their relative
 order).  They are then renumbered 1, 2, 3, … from the beginning of
-the series.  Finally, any underlag files linked to moved vouchers are
-renamed using a collision-safe two-pass strategy:
-
-1. All affected files are first renamed to temporary names
-   (``__sort_tmp_{id}.ext``) so that old and new numbers can freely
-   overlap.
-2. Files are renamed from the temporary names to their final
-   ``Verifikation_A{n}[…]`` names, and the SQLite index is updated.
+the series.  Any underlag rows linked to moved vouchers are updated
+with a single SQL ``UPDATE`` — because documents are stored as BLOBs
+in the DB rather than files on disk, no file renames are needed.
 
 **Label reference updates**
 
@@ -1071,14 +1075,9 @@ Supporting Documents (Underlag)
 
 The ``underlag`` command group manages binary supporting documents
 (receipts, invoices, bank statements) associated with individual
-vouchers.  Files are stored in a directory and indexed in a SQLite
-database, both placed next to the ledger file.
-
-.. code-block:: text
-
-   ledger_2024.se
-   ledger_2024_underlag/          ← actual files
-   ledger_2024_underlag.db        ← SQLite index
+vouchers.  Files are stored as BLOBs in the ``underlag`` table of
+``ledger_2024_ledger.db`` — no separate directory or index database is
+needed during normal operation.
 
 underlag add
 ~~~~~~~~~~~~
@@ -1099,14 +1098,14 @@ Attach one or more files to a voucher.
    common types (PDF, JPEG, PNG, TIFF) receive appropriate MIME types
    in the SIE 5 manifest when exported.
 
-Files are copied into the underlag directory and named following the
-established **Verifikation** convention:
+File contents are read and stored as a BLOB in the ``underlag`` table of
+``_ledger.db``.  The derived stored filename follows the **Verifikation**
+convention and is shown by ``underlag list``:
 
 * Single file for a voucher → ``Verifikation_A5.pdf``
 * Multiple files → ``Verifikation_A5[1av2].pdf``, ``Verifikation_A5[2av2].pdf``
 
-When a second file is added to a voucher that previously had only one,
-the existing file is automatically renamed to the ``[1avN]`` form.
+The original file on disk is not modified or moved.
 
 .. code-block:: bash
 
@@ -1138,7 +1137,8 @@ underlag open
 ~~~~~~~~~~~~~
 
 Open all underlag files for a voucher with the system default viewer
-(``xdg-open`` on Linux).
+(``xdg-open`` on Linux).  Each BLOB is extracted to
+``/tmp/bokforing_underlag/{id}_{original_name}`` before opening.
 
 .. code-block:: text
 
@@ -1161,14 +1161,48 @@ Remove a stored underlag file by its database ID.
 
    Integer database ID as shown by ``underlag list REF``.
 
-When the last or only file for a voucher is removed the remaining files
-(if any) are automatically renumbered to keep the ``[1avN]`` sequence
-consistent.
+Removes the BLOB row from the DB.  The derived filenames shown by
+``underlag list`` for remaining files update automatically since they
+are computed from insertion order at query time.
 
 .. code-block:: bash
 
    python main.py underlag list A:5     # find the ID
    python main.py underlag remove 3     # remove file with ID 3
+
+
+----
+
+export
+~~~~~~
+
+Export the current ledger to a SIE 4 ``.se`` file with a companion
+``_underlag/`` directory.  Useful for sharing with SIE 4-only tools,
+archiving, or generating input for the ``ar`` årsredovisning tool.
+
+.. code-block:: text
+
+   Usage: main.py export [OPTIONS]
+
+.. option:: -o FILE, --output FILE
+
+   Output ``.se`` path.  Default: ``ledger_YYYY.se`` derived from the
+   ``_ledger.db`` stem, placed in the same directory as the DB.
+
+The command writes:
+
+* A SIE 4 plain-text file at the specified path.
+* A ``{stem}_underlag/`` directory (alongside the ``.se`` file)
+  containing all BLOB files using the Verifikation naming convention,
+  if any underlag is present.
+
+.. code-block:: bash
+
+   python main.py export
+   # → ledger_2024.se
+   # → ledger_2024_underlag/  (if underlag exists)
+
+   python main.py export -o /tmp/handover_2024.se
 
 
 ----
@@ -1271,9 +1305,7 @@ SRU codes                ✗ (not carried in SIE 5)
 .. code-block:: bash
 
    python main.py sie5import ../Retsina_Consulting_AB_2023-01-01_2023-12-31.si5
-   # → Retsina_Consulting_AB_2023.se
-   # → Retsina_Consulting_AB_2023_underlag/
-   # → Retsina_Consulting_AB_2023_underlag.db
+   # → Retsina_Consulting_AB_2023_ledger.db  (ledger + underlag BLOBs)
 
 
 ----
@@ -1287,10 +1319,11 @@ Starting a new fiscal year
 .. code-block:: bash
 
    # 1. Close last year by creating this year's ledger
-   python main.py init 2025 --from-sie ledger_2024.se
+   python main.py init 2025 --from-sie ledger_2024_ledger.db
+   # → creates ledger_2025_ledger.db
 
    # 2. Begin posting vouchers
-   python main.py -l ledger_2025.se add
+   python main.py -l ledger_2025_ledger.db add
 
 Daily voucher entry
 ~~~~~~~~~~~~~~~~~~~
@@ -1325,5 +1358,6 @@ Restore from archive
 .. code-block:: bash
 
    python main.py sie5import CompanyName_2024-01-01_2024-12-31.si5
-   python main.py -l CompanyName_2024.se verify
-   python main.py -l CompanyName_2024.se balance
+   # → CompanyName_2024_ledger.db
+   python main.py -l CompanyName_2024_ledger.db verify
+   python main.py -l CompanyName_2024_ledger.db balance

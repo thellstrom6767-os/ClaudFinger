@@ -121,6 +121,8 @@ def _build_xml(
             _sub(acc_el, 'OpeningBalance', amount=_amt(sie.ib[acc.number]))
         if acc.number in sie.ub:
             _sub(acc_el, 'ClosingBalance', amount=_amt(sie.ub[acc.number]))
+        if acc.number in sie.res:
+            _sub(acc_el, 'ResultBalance', amount=_amt(sie.res[acc.number]))
 
     # ── Journals ──────────────────────────────────────────────────────────
     journals_el = _sub(root, 'Journals')
@@ -183,29 +185,28 @@ def generate_sie5(
     Returns (n_vouchers, n_documents).
     """
     # ── collect underlag ──────────────────────────────────────────────────
-    underlag_dir, _ = underlag_module._paths(ledger_path)
-
-    doc_counter  = 0
-    doc_refs: list[tuple[int, str]] = []            # (doc_id, filename)
-    voucher_docs: dict[tuple[str,int], list[int]] = {}
+    doc_counter = 0
+    doc_entries: list[tuple[int, str, int]] = []     # (doc_id, filename, file_id)
+    voucher_docs: dict[tuple[str, int], list[int]] = {}
 
     for summary in underlag_module.list_all(ledger_path):
         series, number = summary['series'], summary['number']
         for finfo in underlag_module.list_for_voucher(ledger_path, series, number):
-            fpath = os.path.join(underlag_dir, finfo['filename'])
-            if os.path.exists(fpath):
-                doc_counter += 1
-                doc_refs.append((doc_counter, finfo['filename']))
-                voucher_docs.setdefault((series, number), []).append(doc_counter)
+            doc_counter += 1
+            doc_entries.append((doc_counter, finfo['filename'], finfo['id']))
+            voucher_docs.setdefault((series, number), []).append(doc_counter)
+
+    doc_refs = [(doc_id, filename) for doc_id, filename, _ in doc_entries]
 
     # ── build XML then zip ────────────────────────────────────────────────
     xml_bytes = _build_xml(sie, doc_refs, voucher_docs)
 
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('sie5.xml', xml_bytes)
-        for _doc_id, filename in doc_refs:
-            fpath = os.path.join(underlag_dir, filename)
-            zf.write(fpath, f'documents/{filename}')
+        for _doc_id, filename, file_id in doc_entries:
+            data = underlag_module.get_data(ledger_path, file_id)
+            if data:
+                zf.writestr(f'documents/{filename}', data)
 
     return len(sie.vouchers), len(doc_refs)
 
@@ -231,7 +232,6 @@ def restore_from_sie5(
     companion underlag store.  Returns (sie, n_documents_restored).
     """
     from .models import Account, Transaction, Voucher
-    from .sie import write as write_sie4
     from . import underlag as ul
 
     ns = {'s': SIE5_NS}
@@ -269,8 +269,9 @@ def restore_from_sie5(
 
         # ── AccountingPlan ────────────────────────────────────────────────
         accounts: list[Account] = []
-        ib: dict[str, Decimal] = {}
-        ub: dict[str, Decimal] = {}
+        ib:  dict[str, Decimal] = {}
+        ub:  dict[str, Decimal] = {}
+        res: dict[str, Decimal] = {}
 
         for acc_el in root.findall('s:AccountingPlan/s:Account', ns):
             number = acc_el.get('Id', '')
@@ -285,6 +286,10 @@ def restore_from_sie5(
             cb = acc_el.find('s:ClosingBalance', ns)
             if cb is not None:
                 ub[number] = Decimal(cb.get('amount', '0'))
+
+            rb = acc_el.find('s:ResultBalance', ns)
+            if rb is not None:
+                res[number] = Decimal(rb.get('amount', '0'))
 
         # ── Document manifest: id → filename ──────────────────────────────
         doc_manifest: dict[str, str] = {
@@ -324,7 +329,7 @@ def restore_from_sie5(
                 if refs:
                     voucher_doc_ids[(series, number)] = refs
 
-        # ── Build SIEFile and write SIE 4 ────────────────────────────────
+        # ── Build SIEFile and write to DB ────────────────────────────────
         sie = SIEFile(
             program=program, program_version=program_version,
             gen_date=gen_date, gen_author=gen_author,
@@ -332,9 +337,10 @@ def restore_from_sie5(
             street=street, zip_city=zip_city,
             year_begins=year_beg, year_ends=year_end,
             currency=currency,
-            accounts=accounts, ib=ib, ub=ub, vouchers=vouchers,
+            accounts=accounts, ib=ib, ub=ub, res=res, vouchers=vouchers,
         )
-        write_sie4(output_sie4_path, sie)
+        from .store import save_ledger as _save_ledger
+        _save_ledger(output_sie4_path, sie)
 
         # ── Restore underlag ──────────────────────────────────────────────
         n_docs = 0

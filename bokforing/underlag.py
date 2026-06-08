@@ -1,120 +1,75 @@
 """Storage and retrieval of supporting documents (underlag) for vouchers.
 
-Each ledger file 'ledger_2024.se' gets:
-  - ledger_2024_underlag/   directory holding the actual files
-  - ledger_2024_underlag.db SQLite index (series, number, filename, metadata)
+Documents are stored as BLOBs in the _ledger.db SQLite database.
+The _underlag/ directory is written only during export (store.export_sie or
+export_underlag below).  File naming uses the Verifikation convention:
 
-Stored filenames follow the established convention:
   single file  → Verifikation_A5.pdf
   multi-file   → Verifikation_A5[1av2].pdf, Verifikation_A5[2av2].pdf
-The DB is the source of truth; filenames are derived on write.
 """
 from __future__ import annotations
 import os
-import shutil
 import sqlite3
 from datetime import date
 from pathlib import Path
 
-
-def _paths(ledger_path: str) -> tuple[str, str]:
-    """Return (underlag_dir, db_path) derived from the ledger path."""
-    base = os.path.splitext(os.path.abspath(ledger_path))[0]
-    return base + '_underlag', base + '_underlag.db'
+from .store import db_path as _db_path
 
 
 def _connect(ledger_path: str) -> sqlite3.Connection:
-    _, db_path = _paths(ledger_path)
-    conn = sqlite3.connect(db_path)
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS underlag (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            series        TEXT    NOT NULL,
-            number        INTEGER NOT NULL,
-            filename      TEXT    NOT NULL,
-            original_name TEXT    NOT NULL,
-            added_at      TEXT    NOT NULL
-        )
-    ''')
-    conn.commit()
-    return conn
+    return sqlite3.connect(_db_path(ledger_path))
 
 
 def _stored_filename(series: str, number: int, seq: int, total: int, ext: str) -> str:
-    """Build a Verifikation filename following the established convention."""
     ref = f'{series}{number}'
     if total == 1:
         return f'Verifikation_{ref}{ext}'
     return f'Verifikation_{ref}[{seq}av{total}]{ext}'
 
 
-def _rename_to_reflect_total(underlag_dir: str, conn: sqlite3.Connection,
-                              series: str, number: int) -> None:
-    """Rename existing files when total count changes (e.g. 1→2 files)."""
-    rows = conn.execute(
-        'SELECT id, filename, original_name FROM underlag '
-        'WHERE series=? AND number=? ORDER BY id',
-        (series, number)
-    ).fetchall()
-    total = len(rows)
-    for seq, (row_id, old_name, original_name) in enumerate(rows, start=1):
-        ext = Path(original_name).suffix.lower()  # always derived from original
-        new_name = _stored_filename(series, number, seq, total, ext)
-        if old_name != new_name:
-            old_path = os.path.join(underlag_dir, old_name)
-            new_path = os.path.join(underlag_dir, new_name)
-            if os.path.exists(old_path):
-                os.rename(old_path, new_path)
-            conn.execute('UPDATE underlag SET filename=? WHERE id=?', (new_name, row_id))
-
-
 def add_file(ledger_path: str, series: str, number: int, src_path: str) -> str:
-    """Copy src_path into the underlag store and register it. Returns stored filename."""
-    underlag_dir, _ = _paths(ledger_path)
-    os.makedirs(underlag_dir, exist_ok=True)
-
+    """Read src_path and store its contents as a BLOB. Returns the derived stored filename."""
     original_name = os.path.basename(src_path)
-    ext = Path(original_name).suffix.lower()
+    with open(src_path, 'rb') as f:
+        data = f.read()
 
     conn = _connect(ledger_path)
     try:
-        # Insert with a placeholder filename first to get the new total
         conn.execute(
-            'INSERT INTO underlag (series, number, filename, original_name, added_at) '
+            'INSERT INTO underlag (series, number, original_name, added_at, data) '
             'VALUES (?,?,?,?,?)',
-            (series, number, '__tmp__', original_name, date.today().isoformat())
+            (series, number, original_name, date.today().isoformat(), data),
         )
         conn.commit()
-
-        # Rename all files for this voucher to reflect the new total
-        _rename_to_reflect_total(underlag_dir, conn, series, number)
-        conn.commit()
-
-        # Find out what filename was assigned to our new row
-        new_row = conn.execute(
-            'SELECT id, filename FROM underlag WHERE series=? AND number=? ORDER BY id DESC LIMIT 1',
+        total = conn.execute(
+            'SELECT COUNT(*) FROM underlag WHERE series=? AND number=?',
             (series, number)
-        ).fetchone()
-        filename = new_row[1]
-        dst = os.path.join(underlag_dir, filename)
-        shutil.copy2(src_path, dst)
-        return filename
+        ).fetchone()[0]
     finally:
         conn.close()
+
+    ext = Path(original_name).suffix.lower()
+    return _stored_filename(series, number, total, total, ext)
 
 
 def list_for_voucher(ledger_path: str, series: str, number: int) -> list[dict]:
     conn = _connect(ledger_path)
     try:
         rows = conn.execute(
-            'SELECT id, filename, original_name, added_at FROM underlag '
+            'SELECT id, original_name, added_at FROM underlag '
             'WHERE series=? AND number=? ORDER BY id',
             (series, number)
         ).fetchall()
     finally:
         conn.close()
-    return [{'id': r[0], 'filename': r[1], 'original_name': r[2], 'added_at': r[3]}
-            for r in rows]
+    total = len(rows)
+    result = []
+    for seq, (row_id, original_name, added_at) in enumerate(rows, start=1):
+        ext = Path(original_name).suffix.lower()
+        filename = _stored_filename(series, number, seq, total, ext)
+        result.append({'id': row_id, 'filename': filename,
+                       'original_name': original_name, 'added_at': added_at})
+    return result
 
 
 def list_all(ledger_path: str) -> list[dict]:
@@ -130,60 +85,30 @@ def list_all(ledger_path: str) -> list[dict]:
 
 
 def remove_file(ledger_path: str, file_id: int) -> str | None:
-    """Remove a file by DB id. Returns the deleted filename or None if not found."""
+    """Remove a file by DB id. Returns original_name or None if not found."""
     conn = _connect(ledger_path)
     try:
         row = conn.execute(
-            'SELECT series, number, filename FROM underlag WHERE id=?', (file_id,)
+            'SELECT original_name FROM underlag WHERE id=?', (file_id,)
         ).fetchone()
         if not row:
             return None
-        series, number, filename = row
-        underlag_dir, _ = _paths(ledger_path)
-        filepath = os.path.join(underlag_dir, filename)
-        if os.path.exists(filepath):
-            os.unlink(filepath)
         conn.execute('DELETE FROM underlag WHERE id=?', (file_id,))
         conn.commit()
-        # Rename remaining files for this voucher to keep numbering consistent
-        _rename_to_reflect_total(underlag_dir, conn, series, number)
-        conn.commit()
-        return filename
+        return row[0]
     finally:
         conn.close()
-
-
-def file_path(ledger_path: str, file_id: int) -> str | None:
-    """Return the full path to a stored file, or None if not found."""
-    conn = _connect(ledger_path)
-    try:
-        row = conn.execute(
-            'SELECT filename FROM underlag WHERE id=?', (file_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    if not row:
-        return None
-    underlag_dir, _ = _paths(ledger_path)
-    return os.path.join(underlag_dir, row[0])
 
 
 def remove_all_for_voucher(ledger_path: str, series: str, number: int) -> int:
-    """Remove all underlag files for a voucher. Returns the number of files removed."""
-    underlag_dir, _ = _paths(ledger_path)
+    """Remove all underlag for a voucher. Returns the number of rows deleted."""
     conn = _connect(ledger_path)
     try:
-        rows = conn.execute(
-            'SELECT id, filename FROM underlag WHERE series=? AND number=? ORDER BY id',
-            (series, number)
-        ).fetchall()
-        for _row_id, filename in rows:
-            filepath = os.path.join(underlag_dir, filename)
-            if os.path.exists(filepath):
-                os.unlink(filepath)
-        conn.execute('DELETE FROM underlag WHERE series=? AND number=?', (series, number))
+        result = conn.execute(
+            'DELETE FROM underlag WHERE series=? AND number=?', (series, number)
+        )
         conn.commit()
-        return len(rows)
+        return result.rowcount
     finally:
         conn.close()
 
@@ -192,57 +117,97 @@ def renumber_vouchers(
     ledger_path: str,
     renumber_map: dict[tuple[str, int], tuple[str, int]],
 ) -> int:
-    """Rename underlag files to reflect new voucher numbers after a sort.
+    """Update underlag rows to reflect new voucher numbers after a sort or delete.
 
-    Uses a two-pass rename to avoid conflicts when old and new numbers
-    overlap (e.g. old A:3 → A:5 while old A:5 → A:3):
-
-      Pass 1 — rename every affected file to a collision-free temp name
-               (``__sort_tmp_{db_id}.ext``).
-      Pass 2 — rename from temp names to final Verifikation names,
-               respecting the [1avN] multi-file convention.
-
-    Returns the number of files renamed.
+    A plain UPDATE is safe because underlag rows carry no unique constraint on
+    (series, number); multiple rows can share the same voucher reference.
+    Returns the number of rows updated.
     """
     if not renumber_map:
         return 0
+    conn = _connect(ledger_path)
+    try:
+        count = 0
+        for (old_series, old_number), (new_series, new_number) in renumber_map.items():
+            result = conn.execute(
+                'UPDATE underlag SET series=?, number=? WHERE series=? AND number=?',
+                (new_series, new_number, old_series, old_number),
+            )
+            count += result.rowcount
+        conn.commit()
+        return count
+    finally:
+        conn.close()
 
-    underlag_dir, _ = _paths(ledger_path)
+
+def get_data(ledger_path: str, file_id: int) -> bytes | None:
+    """Return the raw BLOB for a file, or None if not found."""
+    conn = _connect(ledger_path)
+    try:
+        row = conn.execute(
+            'SELECT data FROM underlag WHERE id=?', (file_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def open_file(ledger_path: str, file_id: int) -> str | None:
+    """Write a BLOB to /tmp/bokforing_underlag/ and return the path.
+
+    The temp file persists until the OS cleans /tmp; xdg-open can read it
+    asynchronously after this function returns.
+    """
+    conn = _connect(ledger_path)
+    try:
+        row = conn.execute(
+            'SELECT original_name, data FROM underlag WHERE id=?', (file_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    original_name, data = row
+    tmp_dir = '/tmp/bokforing_underlag'
+    os.makedirs(tmp_dir, exist_ok=True)
+    tmp_path = os.path.join(tmp_dir, f'{file_id}_{original_name}')
+    with open(tmp_path, 'wb') as f:
+        f.write(data)
+    return tmp_path
+
+
+def export_underlag(ledger_path: str, underlag_dir: str) -> int:
+    """Write all BLOB files to underlag_dir using the Verifikation naming convention.
+
+    Returns the number of files written.
+    """
     conn = _connect(ledger_path)
     try:
         rows = conn.execute(
-            'SELECT id, series, number, filename FROM underlag ORDER BY id'
+            'SELECT series, number, original_name, data FROM underlag '
+            'ORDER BY series, number, id'
         ).fetchall()
-
-        affected = [
-            (row_id, series, number, filename)
-            for row_id, series, number, filename in rows
-            if (series, number) in renumber_map
-        ]
-        if not affected:
-            return 0
-
-        # Pass 1: rename to temp names and update DB with new (series, number)
-        for row_id, series, number, filename in affected:
-            ext = Path(filename).suffix
-            tmp_name = f'__sort_tmp_{row_id}{ext}'
-            old_path = os.path.join(underlag_dir, filename)
-            tmp_path = os.path.join(underlag_dir, tmp_name)
-            if os.path.exists(old_path):
-                os.rename(old_path, tmp_path)
-            new_series, new_number = renumber_map[(series, number)]
-            conn.execute(
-                'UPDATE underlag SET filename=?, series=?, number=? WHERE id=?',
-                (tmp_name, new_series, new_number, row_id),
-            )
-        conn.commit()
-
-        # Pass 2: rename from temp names to final Verifikation names
-        updated_vouchers = set(renumber_map.values())
-        for new_series, new_number in sorted(updated_vouchers):
-            _rename_to_reflect_total(underlag_dir, conn, new_series, new_number)
-        conn.commit()
-
-        return len(affected)
     finally:
         conn.close()
+
+    if not rows:
+        return 0
+
+    os.makedirs(underlag_dir, exist_ok=True)
+
+    from collections import defaultdict
+    groups: dict[tuple[str, int], list] = defaultdict(list)
+    for series, number, original_name, data in rows:
+        groups[(series, number)].append((original_name, data))
+
+    count = 0
+    for (series, number), files in sorted(groups.items()):
+        total = len(files)
+        for seq, (original_name, data) in enumerate(files, start=1):
+            ext = Path(original_name).suffix.lower()
+            filename = _stored_filename(series, number, seq, total, ext)
+            with open(os.path.join(underlag_dir, filename), 'wb') as f:
+                f.write(data)
+            count += 1
+
+    return count
