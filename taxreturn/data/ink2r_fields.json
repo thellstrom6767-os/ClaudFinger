@@ -1,0 +1,518 @@
+{
+  "7011": {
+    "attr": "Räkenskapsårets början",
+    "datatype": "Datum_D",
+    "sign": "*",
+    "rule": ""
+  },
+  "7012": {
+    "attr": "Räkenskapsårets slut",
+    "datatype": "Datum_D",
+    "sign": "*",
+    "rule": ""
+  },
+  "7201": {
+    "attr": "2.1 Immateriella anläggningstillgångar Koncessioner, patent, licenser, varumärken, hyresrätter, goodwill och liknande rättigheter",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7202": {
+    "attr": "2.2 Immateriella anläggningstillgångar Förskott avseende immateriella anläggningstillgångar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7214": {
+    "attr": "2.3 Materiella anläggningstillgångar Byggnader och mark",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7215": {
+    "attr": "2.4 Materiella anläggningstillgångar Maskiner, inventarier och övriga materiella anläggningstillgångar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7216": {
+    "attr": "2.5 Materiella anläggningstillgångar Förbättringsutgifter på annans fastighet",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7217": {
+    "attr": "2.6 Materiella anläggningstillgångar Pågående nyanläggningar och förskott avseende materiella anläggningstillgångar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7230": {
+    "attr": "2.7 Finansiella anläggningstillgångar Andelar i koncernföretag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7231": {
+    "attr": "2.8 Finansiella anläggningstillgångar Andelar i intresseföretag och gemensamt styrda företag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7233": {
+    "attr": "2.9 Ägarintressen i övriga företag och \n andra långfristiga värdepappersinnehav",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7232": {
+    "attr": "2.10 Finansiella anläggningstillgångar Fordringar hos koncern-, intresse- och  gemensamt styrda företag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7234": {
+    "attr": "2.11 Finansiella anläggningstillgångar Lån till delägare eller närstående",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7235": {
+    "attr": "2.12 Fordringar hos övriga företag som \n det finns ett ägarintresse i och \n andra långfristiga fordringar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7241": {
+    "attr": "2.13 Varulager m.m. Råvaror och förnödenheter",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7242": {
+    "attr": "2.14 Varulager Varor under tillverkning",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7243": {
+    "attr": "2.15 Varulager Färdiga varor och handelsvaror",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7244": {
+    "attr": "2.16 Varulager Övriga lagertillgångar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7245": {
+    "attr": "2.17 Varulager Pågående arbeten för annans räkning",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7246": {
+    "attr": "2.18 Varulager Förskott till leverantörer",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7251": {
+    "attr": "2.19 Kortfristiga fordringar Kundfordringar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7252": {
+    "attr": "2.20 Kortfristiga fordringar Fordringar hos koncern-, intresse- och gemensamt styrda företag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7261": {
+    "attr": "2.21 Fordringar hos övriga företag som det \n finns ett ägarintresse i och \n övriga fordringar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7262": {
+    "attr": "2.22 Kortfristiga fordringar Upparbetad men ej fakturerad intäkt",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7263": {
+    "attr": "2.23 Kortfristiga fordringar Förutbetalda kostnader och upplupna intäkter",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7270": {
+    "attr": "2.24 Kortfristiga placeringar Andelar i koncernföretag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7271": {
+    "attr": "2.25 Kortfristiga placeringar Övriga kortfristiga placeringar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7281": {
+    "attr": "2.26 Kassa och bank Kassa, bank och redovisningsmedel",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7301": {
+    "attr": "2.27 Eget kapital Bundet eget kapital",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7302": {
+    "attr": "2.28 Eget kapital Fritt eget kapital",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7321": {
+    "attr": "2.29 Obeskattade reserver Periodiseringsfonder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7322": {
+    "attr": "2.30 Obeskattade reserver Ackumulerade överavskrivningar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7323": {
+    "attr": "2.31 Obeskattade reserver Övriga obeskattade reserver",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7331": {
+    "attr": "2.32 Avsättningar Avsättningar för pensioner och liknande förpliktelser enligt lag (1967:531)...",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7332": {
+    "attr": "2.33 Avsättningar Övriga avsättningar för pensioner och liknande förpliktelser",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7333": {
+    "attr": "2.34 Avsättningar Övriga avsättningar",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7350": {
+    "attr": "2.35 Långfristiga skulder Obligationslån",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7351": {
+    "attr": "2.36 Långfristiga skulder Checkräkningskredit",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7352": {
+    "attr": "2.37 Långfristiga skulder Övriga skulder till kreditinstitut",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7353": {
+    "attr": "2.38 Långfristiga skulder Skulder till koncern-, intresse- och gemensamt styrda företag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7354": {
+    "attr": "2.39 Skulder till övriga företag som det finns \n ett ägarintresse i och övriga skulder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7360": {
+    "attr": "2.40 Kortfristiga skulder Checkräkningskredit",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7361": {
+    "attr": "2.41 Kortfristiga skulder Övriga skulder till kreditinstitut",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7362": {
+    "attr": "2.42 Kortfristiga skulder Förskott från kunder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7363": {
+    "attr": "2.43 Kortfristiga skulder Pågående arbeten för annans räkning",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7364": {
+    "attr": "2.44 Kortfristiga skulder Fakturerad men ej upparbetad intäkt",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7365": {
+    "attr": "2.45 Kortfristiga skulder Leverantörsskulder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7366": {
+    "attr": "2.46 Kortfristiga skulder Växelskulder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7367": {
+    "attr": "2.47 Kortfristiga skulder Skulder till koncern-, intresse- och gemensamt styrda företag",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7369": {
+    "attr": "2.48 Skulder till övriga företag som det finns \n ett ägarintresse i och övriga skulder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7368": {
+    "attr": "2.49 Kortfristiga skulder Skattesskulder",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7370": {
+    "attr": "2.50 Kortfristiga skulder Upplupna kostnader och förutbetalda intäkter",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "7410": {
+    "attr": "3.1 Nettoomsättning",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7411": {
+    "attr": "3.2 Förändring av lager av produkter i arbete, färdiga varor och pågående arbete för annans räkning. +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7510": {
+    "attr": "3.2 Förändring av lager av produkter i arbete, färdiga varor och pågående arbete för annans räkning. -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7412": {
+    "attr": "3.3 Aktiverat arbete för egen räkning",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7413": {
+    "attr": "3.4 Övriga rörelseintäkter",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7511": {
+    "attr": "3.5 Råvaror och förnödenheter",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7512": {
+    "attr": "3.6 Handelsvaror",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7513": {
+    "attr": "3.7 Övriga externa kostnader",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7514": {
+    "attr": "3.8 Personalkostnader",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7515": {
+    "attr": "3.9 Av- och nedskrivningar av materiella och immateriella anläggningstillgångar",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7516": {
+    "attr": "3.10 Nedskrivningar av omsättningstillgångar utöver normala nedskrivningar",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7517": {
+    "attr": "3.11 Övriga rörelsekostnader",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7414": {
+    "attr": "3.12 Resultat från andelar i koncernföretag +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7518": {
+    "attr": "3.12 Resultat från andelar i koncernföretag -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7415": {
+    "attr": "3.13 Resultat från andelar i intresseföretag och gemensamt styrda företag +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7519": {
+    "attr": "3.13 Resultat från andelar i intresseföretag och gemensamt styrda företag -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7423": {
+    "attr": "3.14 Resultat från övriga företag som det finns ett ägarintresse i +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7530": {
+    "attr": "3.14 Resultat från övriga företag som det finns ett ägarintresse i -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7416": {
+    "attr": "3.15 Resultat från övriga finansiella anläggningstillgångar +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7520": {
+    "attr": "3.15 Resultat från övriga finansiella anläggningstillgångar -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7417": {
+    "attr": "3.16 Övriga ränteintäkter och liknande resultatposter",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7521": {
+    "attr": "3.17 Nedskrivning av finansiella anläggningstillgångar och kortfristiga placeringar",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7522": {
+    "attr": "3.18 Räntekostnader och liknande resultatposter",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7524": {
+    "attr": "3.19 Lämnade koncernbidrag",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7419": {
+    "attr": "3.20 Mottagna koncernbidrag",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7420": {
+    "attr": "3.21 Återföring av periodiseringsfond",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7525": {
+    "attr": "3.22 Avsättning till periodiseringsfond",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7421": {
+    "attr": "3.23 Förändring av överavskrivningar +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7526": {
+    "attr": "3.23 Förändring av överavskrivningar -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7422": {
+    "attr": "3.24 Övriga bokslutsdispositioner +",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7527": {
+    "attr": "3.24 Övriga bokslutsdispositioner -",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7528": {
+    "attr": "3.25 Skatt på årets resultat",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7450": {
+    "attr": "3.26 Årets resultat, vinst (flyttas till p. 4.1)",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": "Får ej förekomma om 7550 finns med och 7550 <> 0."
+  },
+  "7550": {
+    "attr": "3.27 Årets resultat, förlust (flyttas till p. 4.2)",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": "Får ej förekomma om 7450 finns med och 7450 <> 0."
+  }
+}

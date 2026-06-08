@@ -1578,6 +1578,310 @@ SRU codes                ✗ (not carried in SIE 5)
 
 ----
 
+
+----
+
+INK2 Tax Return (SRU)
+---------------------
+
+The ``taxreturn`` command group generates ``INFO.SRU`` and ``BLANKETTER.SRU``
+files for electronic submission to Skatteverket.  It covers three blankett
+blocks:
+
+* **INK2** — main tax return form (page 1)
+* **INK2R** — räkenskapsschema (balance sheet + P&L, pages 2–4)
+* **INK2S** — skattemässiga justeringar (tax adjustments, page 5)
+
+Commands are invoked as a subgroup of the main CLI:
+
+.. code-block:: bash
+
+   python main.py [--ledger FILE] taxreturn COMMAND [OPTIONS]
+
+Data files in ``taxreturn/data/`` (``ink2_fields.json``, ``ink2r_fields.json``,
+``ink2s_fields.json``, ``bas_ink2r.json``) must be present before any command
+other than ``update-data`` will run.  Generate them once with
+``taxreturn update-data`` and commit them.
+
+taxreturn init
+~~~~~~~~~~~~~~
+
+Create a supplement YAML with default parameters.  Edit the file before
+running ``taxreturn generate``.
+
+.. code-block:: text
+
+   Usage: main.py taxreturn init
+
+The file is named ``<stem>_taxreturn.yaml`` alongside the ledger
+(e.g. ``ledger_2024_taxreturn.yaml``).  Fails if the file already exists.
+
+**Generated template**
+
+.. code-block:: yaml
+
+   statslanerantan: "0.0250"   # Statslåneränta vid årets ingång (from Riksbanken)
+   skattesats: "0.206"         # Bolagsskattesats
+   konto_ar: {}                # Periodiseringsfond vintage overrides: {account: year}
+   uppdragstagare: true        # Uppdragstagare biträtt: yes/no
+   revision: false             # Årsredovisning föremål för revision: yes/no
+   program: "ClaudFinger"
+   version: "0.1"
+   # manual_fields: {}         # Override any SRU field: {field_code: value}
+
+**Example**
+
+.. code-block:: bash
+
+   python main.py taxreturn init
+
+taxreturn show
+~~~~~~~~~~~~~~
+
+Display all computed INK2, INK2R, and INK2S field values without writing
+any files.  Use this to review the tax return before generating SRU output.
+
+.. code-block:: text
+
+   Usage: main.py taxreturn show [OPTIONS]
+
+.. option:: -s FILE, --supplement FILE
+
+   Supplement YAML to use.  Default: ``<stem>_taxreturn.yaml`` derived from
+   the ledger path.
+
+**Example output**
+
+.. code-block:: text
+
+   INK2 – 2024P4  (556927-9168  Retsina Consulting AB)
+     Räkenskapsår: 2024-01-01
+                 – 2024-12-31
+
+     ── INK2 (sida 1) ──
+       7011       20240101  Datum_D
+       7012       20241231  Datum_D
+       7104            730  Överskott av näringsverksamhet
+
+     ── INK2R (sida 2–4 räkenskapsschema) ──
+       7410           5230  Nettoomsättning
+       …
+
+     ── INK2S (sida 5 skattemässiga justeringar) ──
+       7011       20240101  …
+       7670            730  Överskott
+
+taxreturn generate
+~~~~~~~~~~~~~~~~~~
+
+Write ``INFO.SRU`` and ``BLANKETTER.SRU`` to an output directory, ready
+for submission to Skatteverket.
+
+.. code-block:: text
+
+   Usage: main.py taxreturn generate [OPTIONS]
+
+.. option:: -s FILE, --supplement FILE
+
+   Supplement YAML.  Default: ``<stem>_taxreturn.yaml``.  The file must
+   exist; run ``taxreturn init`` first.
+
+.. option:: -o DIR, --output DIR
+
+   Output directory.  Default: ``<stem>_taxreturn/`` alongside the ledger.
+
+The command writes two files:
+
+``INFO.SRU``
+  Sender metadata block (``#DATABESKRIVNING`` + ``#MEDIELEV``) with company
+  name, org nr, address, phone, and contact details from the ledger.
+
+``BLANKETTER.SRU``
+  Three blankett blocks: ``INK2-YYYYPN``, ``INK2R-YYYYPN``, ``INK2S-YYYYPN``,
+  each prefixed with ``#BLANKETT`` / ``#IDENTITET`` and followed by
+  ``#UPPGIFT NNNN value`` lines.  The file ends with ``#FIL_SLUT``.
+
+Blankett period (``YYYYPN``) is derived from the fiscal year-end month:
+Jan–Apr → P1, May–Jun → P2, Jul–Aug → P3, Sep–Dec → P4.
+
+If unmapped P&L accounts are found, warnings are printed to stderr.
+
+**Example**
+
+.. code-block:: bash
+
+   python main.py taxreturn generate
+   # → ledger_2024_taxreturn/INFO.SRU
+   # → ledger_2024_taxreturn/BLANKETTER.SRU
+
+   python main.py taxreturn generate -o /tmp/inkl2_2024/
+
+taxreturn annotate
+~~~~~~~~~~~~~~~~~~
+
+Write BAS→INK2R SRU field codes into the ledger's account table.  Once
+annotated, SRU codes are preserved in SIE 4 exports as ``#SRU`` lines and
+are used as the primary lookup during ``taxreturn generate``.
+
+Run this once after the first ``taxreturn generate`` to ensure every account
+is mapped; re-run with ``--force`` when the BAS mapping changes.
+
+.. code-block:: text
+
+   Usage: main.py taxreturn annotate [OPTIONS]
+
+.. option:: --force
+
+   Overwrite existing SRU codes (default: skip accounts that already have
+   codes).
+
+.. option:: -y, --yes
+
+   Skip the confirmation prompt.
+
+.. option:: --dry-run
+
+   Show what would change without writing anything.
+
+**Behaviour**
+
+Loops over all accounts in the ledger.  For each account, looks up its
+number in ``bas_ink2r.json`` by range matching.  Accounts with no match in
+the 1000–8999 range are reported but not treated as errors.
+
+**Example**
+
+.. code-block:: bash
+
+   # Preview
+   python main.py taxreturn annotate --dry-run
+
+   # Apply (prompts for confirmation)
+   python main.py taxreturn annotate
+
+   # Force-refresh all codes
+   python main.py taxreturn annotate --force --yes
+
+taxreturn update-data
+~~~~~~~~~~~~~~~~~~~~~
+
+Download the latest Skatteverket field specs and bas.se BAS→INK2R mapping,
+and regenerate ``taxreturn/data/*.json``.  Run this once per year when
+Skatteverket publishes new blankett specifications.
+
+.. code-block:: text
+
+   Usage: main.py taxreturn update-data [OPTIONS]
+
+.. option:: --skv-zip FILE
+
+   Use a locally downloaded Skatteverket ZIP instead of fetching from the web.
+   The ZIP is the ``_Nyheter_from_beskattningsperiod_YYYYPN.zip`` file
+   available from the Skatteverket technical file transfer page.
+
+.. option:: --bas-xlsx FILE
+
+   Use a locally downloaded bas.se ``INK2_P1-*.xlsx`` file instead of
+   fetching from the web.
+
+**What is generated**
+
+=============================  ============================================
+File                           Source
+=============================  ============================================
+``ink2_fields.json``           ``INK2_*.xls`` from Skatteverket ZIP
+``ink2r_fields.json``          ``INK2R_*.xls`` from Skatteverket ZIP
+``ink2s_fields.json``          ``INK2S_*.xls`` from Skatteverket ZIP
+``bas_ink2r.json``             ``INK2_P1-*.xlsx`` from bas.se
+=============================  ============================================
+
+Commit the regenerated JSON files after running this command.
+
+**Example**
+
+.. code-block:: bash
+
+   # Fetch everything from the web
+   python main.py taxreturn update-data
+
+   # Use already-downloaded files
+   python main.py taxreturn update-data \
+       --skv-zip Nyheter_from_beskattningsperiod_2025P4.zip \
+       --bas-xlsx INK2_P1-20250101.xlsx
+
+INK2R field population
+~~~~~~~~~~~~~~~~~~~~~~
+
+INK2R (räkenskapsschema) is populated from ledger accounts:
+
+* **Balance sheet fields (7200–7399)** — closing balances (UB) for accounts
+  that map into those ranges.  Values are always positive magnitudes.
+* **P&L fields (7400–7599)** — period sums (sum of all transactions during
+  the year) for accounts 3000–8989.  Sign rules per field:
+
+  * ``sign = "+"`` (income): SIE credit (negative) is negated → positive.
+  * ``sign = "-"`` (cost): SIE debit (positive) is used as-is.
+  * ``sign = "*"``: absolute value.
+
+* **7450/7550 (årets resultat)** — computed directly as
+  ``−Σ(period[3000–8989])`` rather than summing the mapped fields; this
+  ensures correctness even before ``taxreturn annotate`` has been run.
+
+If a P&L account has no INK2R field mapping, a warning is emitted.  Run
+``taxreturn annotate`` to add the missing SRU codes to the ledger so they
+appear in the mapping on the next run.
+
+Some P&L field pairs share the same account range (e.g. periodiseringsfond
+reversals vs. new provisions) but differ by net sign (*netto +* / *netto −*).
+The code detects these companion-field pairs and routes each amount to the
+appropriate field based on the computed sign.
+
+INK2S field computation
+~~~~~~~~~~~~~~~~~~~~~~~
+
+INK2S fields are derived from ``skatt.py`` output and ledger data:
+
+============  ==================  ==========================================
+Field         Source              Meaning
+============  ==================  ==========================================
+7650/7750     accounting result   Årets resultat (bokfört)
+7651          konto 8910 period   Bolagsskatt (non-deductible add-back)
+7654          skatt.schablonintäkt  Schablonintäkt periodiseringsfond
+7673          skatt.total_uppräkning  Uppräknat belopp återföring pf
+7670/7770     skatt.skattbart_resultat  Överskott/Underskott
+8040/8041     supplement          Uppdragstagare biträtt (ja/nej)
+8044/8045     supplement          Revision (ja/nej)
+============  ==================  ==========================================
+
+``skattbart_resultat = res_fore_skatt + 8314 + 8423 + schablonintäkt + uppräkning``
+
+The same ``statslanerantan``, ``skattesats``, and ``konto_ar`` overrides used
+by ``bokslut skatt`` apply here; supply them in the supplement YAML.
+
+**Typical workflow**
+
+.. code-block:: bash
+
+   # First time setup
+   python main.py taxreturn init
+   $EDITOR ledger_2024_taxreturn.yaml   # set statslanerantan, review defaults
+
+   # Annotate accounts (populates INK2R; idempotent)
+   python main.py taxreturn annotate
+
+   # Review before generating
+   python main.py taxreturn show
+
+   # Generate SRU files
+   python main.py taxreturn generate
+   # → ledger_2024_taxreturn/INFO.SRU
+   # → ledger_2024_taxreturn/BLANKETTER.SRU
+
+   # Update data files when Skatteverket publishes new specs
+   python main.py taxreturn update-data
+
+----
+
 Typical Workflows
 -----------------
 
@@ -1629,3 +1933,22 @@ Restore from archive
    # → CompanyName_2024_ledger.db
    python main.py -l CompanyName_2024_ledger.db verify
    python main.py -l CompanyName_2024_ledger.db balance
+
+Generating an INK2 tax return
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # First time: create supplement, annotate accounts, generate
+   python main.py taxreturn init
+   $EDITOR ledger_2024_taxreturn.yaml   # set statslanerantan, review defaults
+   python main.py taxreturn annotate    # write BAS→INK2R codes into ledger
+   python main.py taxreturn show        # review computed fields
+   python main.py taxreturn generate
+   # → ledger_2024_taxreturn/INFO.SRU
+   # → ledger_2024_taxreturn/BLANKETTER.SRU
+
+   # Subsequent years: supplement already exists; just update and regenerate
+   python main.py -l ledger_2025_ledger.db taxreturn init
+   python main.py -l ledger_2025_ledger.db taxreturn annotate
+   python main.py -l ledger_2025_ledger.db taxreturn generate

@@ -1,0 +1,302 @@
+{
+  "7011": {
+    "attr": "Räkenskapsårets början",
+    "datatype": "Datum_D",
+    "sign": "*",
+    "rule": ""
+  },
+  "7012": {
+    "attr": "Räkenskapsårets slut",
+    "datatype": "Datum_D",
+    "sign": "*",
+    "rule": ""
+  },
+  "7650": {
+    "attr": "4.1 Årets resultat, vinst",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": "Får ej förekomma om 7750 finns med och den <> 0."
+  },
+  "7750": {
+    "attr": "4.2 Årets resultat, förlust",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": "Får ej förekomma om 7650 finns med och den <> 0."
+  },
+  "7651": {
+    "attr": "4.3a. Bokförda kostnader som inte ska dras av: a. Skatt på årets resultat",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7652": {
+    "attr": "b. Bokförda kostnader som inte ska dras av: b. Nedskrivning av finansiella tillgångar",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7653": {
+    "attr": "c. Bokförda kostnader som inte ska dras av: c. Andra bokförda kostnader",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7751": {
+    "attr": "4.4a. Kostnader som ska dras av men som inte ingår i det redovisade resultatet: a. Lämnade koncernbidrag",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7764": {
+    "attr": "b. Kostnader som ska dras av men som inte ingår i det redovisade resultatet: b. Andra ej bokförda kostnader",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7752": {
+    "attr": "4.5a. Bokförda intäkter som inte ska tas upp: a. Ackordsvinster",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7753": {
+    "attr": "b. Bokförda intäkter som inte ska tas upp: b. Utdelning",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7754": {
+    "attr": "c. Bokförda intäkter som inte ska tas upp: c. Andra bokförda intäkter",
+    "datatype": "Numeriskt_A",
+    "sign": "-",
+    "rule": ""
+  },
+  "7654": {
+    "attr": "4.6a. Intäkter som ska tas upp men som inte \n ingår i det redovisade resultatet\na. Beräknad schablonintäkt på \n periodiseringsfonder vid \n beskattningsårets ingång",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7668": {
+    "attr": "b. Beräknad schablonintäkt på \n fondandelar ägda vid \n kalenderårets ingång",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7655": {
+    "attr": "c. Intäkter som ska tas upp men som inte ingår i det redovisade resultatet: c. Mottagna koncernbidrag",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7673": {
+    "attr": "d. Intäkter som ska tas upp men som inte ingår i det redovisade resultatet: d. Uppräknat belopp vid återföring av periodiseringsfond",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7665": {
+    "attr": "e. Intäkter som ska tas upp men som inte ingår i det redovisade resultatet: e. Andra ej bokförda intäkter",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7755": {
+    "attr": "4.7a. Avyttring av delägarrätter: a. Bokförd vinst",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7656": {
+    "attr": "b. Avyttring av delägarrätter: b. Bokförd förlust",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7756": {
+    "attr": "c. Avyttring av delägarrätter: c. Uppskov med kapitalvinst enligt blankett N4",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7657": {
+    "attr": "d. Avyttring av delägarrätter: d. Återfört uppskov med kapitalvinst enligt blankett N4",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7658": {
+    "attr": "e. Avyttring av delägarrätter: e. Kapitalvinst för beskattningsåret",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7757": {
+    "attr": "f. Avyttring av delägarrätter: f. Kapitalförlust som ska dras av",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7758": {
+    "attr": "4.8a. Andel i handelsbolag (inkl. avyttring): a. Bokförd intäkt/vinst",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7659": {
+    "attr": "b. Andel i handelsbolag (inkl. avyttring): b. Skattemässigt överskott enligt N3B",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7660": {
+    "attr": "c. Andel i handelsbolag (inkl. avyttring): c. Bokförd kostnad/förlust",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7759": {
+    "attr": "d. Andel i handelsbolag (inkl. avyttring): d. Skattemässigt underskott enligt N3B",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7666": {
+    "attr": "4.9 Skattemässig justering av bokfört resultat för avskrivningar på byggnader och annan fast egendom samt restvärdesavskrivning på maskiner och inventarier (+)",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7765": {
+    "attr": "4.9 Skattemässig justering av bokfört resultat för avskrivningar på byggnader och annan fast egendom samt restvärdesavskrivning på maskiner och inventarier (-)",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7661": {
+    "attr": "4.10 Skattemässig justering av bokfört \n resultat vid avyttring av näringsfastighet \n och näringsbostadsrätt",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7760": {
+    "attr": "4.10 Skattemässig korrigering av bokfört resultat vid avyttring av näringsfastighet och näringsbostadsrätt: -",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7761": {
+    "attr": "4.11 Skogs-/substansminskningsavdrag (specificeras på blankett N8)",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7662": {
+    "attr": "4.12 Återföringar vid avyttring av fastighet t.ex. värdeminskningsavdrag, skogsavdrag och substansminskningsavdrag...",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7663": {
+    "attr": "4.13 Andra skattemässiga justeringar av resultatet: +",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": ""
+  },
+  "7762": {
+    "attr": "4.13 Andra skattemässiga justeringar av resultatet: -",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7763": {
+    "attr": "4.14a. Underskott: a. Outnyttjat underskott från föregående år",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": ""
+  },
+  "7671": {
+    "attr": "4.14b. Reduktion av outnyttjat underskott med hänsyn till beloppsspärr, ackord eller konkurs",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7672": {
+    "attr": "4.14c. Reduktion av outnyttjat underskott med hänsyn till koncernbidragsspärr, fusionsspärr m.m. (beloppet ska också tas upp vid p. 1.2. på sid. 1)",
+    "datatype": "Numeriskt_A",
+    "sign": "+",
+    "rule": ""
+  },
+  "7670": {
+    "attr": "4.15 Överskott (flyttas till p. 1.1 på sid. 1)",
+    "datatype": "Numeriskt_B",
+    "sign": "+",
+    "rule": "Får ej förekomma om 7770 finns med och 7770 <> 0."
+  },
+  "7770": {
+    "attr": "4.16 Underskott (flyttas till p. 1.2 på sid. 1)",
+    "datatype": "Numeriskt_B",
+    "sign": "-",
+    "rule": "Får ej förekomma om 7670 finns med och 7670 <> 0."
+  },
+  "8020": {
+    "attr": "4.17 Årets begärda och tidigare års medgivna värdeminskningsavdrag som finns vid beskattningsårets utgång avseende byggnader.",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "8021": {
+    "attr": "4.18 Årets begärda och tidigare års medgivna värdeminskningsavdrag  som finns vid beskattningsårets utgång avseende markanläggningar.",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "8023": {
+    "attr": "4.19 Vid restvärdesavskrivning:\nåterförda belopp för av- och nedskrivning,\nförsäljning, utrangering",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "8026": {
+    "attr": "4.20 Lån från aktieägare (fysisk person)\nvid räkenskapsårets utgång",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "8022": {
+    "attr": "4.21 Pensionskostnader (som ingår i p. 3.8)",
+    "datatype": "Numeriskt_A",
+    "sign": "*",
+    "rule": ""
+  },
+  "8028": {
+    "attr": "4.22 Koncernbidragsspärrat och fusionsspärrat \n underskott m.m. (frivillig uppgift)",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "8040": {
+    "attr": "Uppdragstagare (t.ex. redovisningskonsult) har biträtt vid upprättandet av årsredovisningen: Ja",
+    "datatype": "Str_X",
+    "sign": "*",
+    "rule": "Får ej förekomma om 8041 finns med."
+  },
+  "8041": {
+    "attr": "Uppdragstagare (t.ex. redovisningskonsult) har biträtt vid upprättandet av årsredovisningen: Nej",
+    "datatype": "Str_X",
+    "sign": "*",
+    "rule": "Får ej förekomma om 8040 finns med."
+  },
+  "8044": {
+    "attr": "Årsredovisningen har varit föremål för revision: Ja",
+    "datatype": "Str_X",
+    "sign": "*",
+    "rule": "Får ej förekomma om 8045 finns med."
+  },
+  "8045": {
+    "attr": "Årsredovisningen har varit föremål för revision: Nej",
+    "datatype": "Str_X",
+    "sign": "*",
+    "rule": "Får ej förekomma om 8044 finns med."
+  }
+}

@@ -10,6 +10,8 @@ from decimal import Decimal, InvalidOperation
 
 import click
 
+from taxreturn.cli import taxreturn as _taxreturn_group
+
 from . import underlag as underlag_module
 from . import samples as samples_module
 from . import store as store_module
@@ -69,6 +71,9 @@ def cli(ctx, ledger):
     """Bokforing — CLI double-entry accounting."""
     ctx.ensure_object(dict)
     ctx.obj['ledger'] = ledger
+
+
+cli.add_command(_taxreturn_group)
 
 
 # ─── init ────────────────────────────────────────────────────────────────────

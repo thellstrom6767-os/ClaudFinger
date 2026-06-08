@@ -1,0 +1,128 @@
+{
+  "7011": {
+    "attr": "Räkenskapsårets början",
+    "datatype": "Datum_D",
+    "sign": "*",
+    "rule": ""
+  },
+  "7012": {
+    "attr": "Räkenskapsårets slut",
+    "datatype": "Datum_D",
+    "sign": "*",
+    "rule": "Tillåtna bokslutsdatum.\r\nPeriod     fr.o.m           t.o.m\r\nÅÅÅÅP1 ÅÅÅÅ0101 ÅÅÅÅ0430\r\nÅÅÅÅP2 ÅÅÅÅ0501 ÅÅÅÅ0630\r\nÅÅÅÅP3 ÅÅÅÅ0701 ÅÅÅÅ0831\r\nÅÅÅÅP4 ÅÅÅÅ0901 ÅÅÅÅ1231"
+  },
+  "7104": {
+    "attr": "1.1 Överskott av näringsverksamhet",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "7114": {
+    "attr": "1.2 Underskott av näringsverksamhet",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "7131": {
+    "attr": "1.3 Kreditinstituts underlag för riskskatt",
+    "datatype": "Numeriskt_13",
+    "sign": "*",
+    "rule": ""
+  },
+  "7132": {
+    "attr": "1.4 Underlag för särskild löneskatt på pensionskostnader",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": "Får ej förekomma om 7133 finns med och den <> 0."
+  },
+  "7133": {
+    "attr": "1.5 Negativt underlag för särskild löneskatt på pensionskostnader",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": "Får ej förekomma om 7132 finns med och den <> 0."
+  },
+  "7153": {
+    "attr": "1.6 a Försäkringsföretag m.fl. samt avsatt till pensioner 15 %",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "7154": {
+    "attr": "1.6 b Utländska pensions- försäkringar 15 %",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "7155": {
+    "attr": "1.7 a Försäkringsföretag m.fl 30 %",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "7156": {
+    "attr": "1.7 b Utländska kapitalförsäkringar \n 30 %",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "80": {
+    "attr": "1.8 Småhus/ ägarlägenhet",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "93": {
+    "attr": "1.9 Hyreshus: \n bostäder",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "84": {
+    "attr": "1.10 Småhus/ägarlägenhet: tomtmark, byggnad under uppförande",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "86": {
+    "attr": "1.11 Hyreshus: tomtmark, bostäder under uppförande",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "95": {
+    "attr": "1.12 Hyreshus: lokaler",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "96": {
+    "attr": "1.13 Industrienhet och elproduktionsenhet: värme- kraftverk",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "97": {
+    "attr": "1.14 Elproduktionsenhet, vattenkraftverk",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "98": {
+    "attr": "1.15 Elproduktionsenhet, vindkraftverk",
+    "datatype": "Numeriskt_B",
+    "sign": "*",
+    "rule": ""
+  },
+  "90": {
+    "attr": "Övriga upplysningar på bilaga",
+    "datatype": "Str_X",
+    "sign": "*",
+    "rule": ""
+  },
+  "1582": {
+    "attr": "1.16 Förnybar el (kilowattimmar)",
+    "datatype": "Numeriskt_10",
+    "sign": "*",
+    "rule": ""
+  }
+}
