@@ -331,19 +331,40 @@ def insert_chain_entry(
 ) -> None:
     """Insert a chain row for (series, number).
 
-    If replace=False (default) the insert is silently ignored when the row
-    already exists.  If replace=True the existing hash is overwritten.
+    replace=False (default): silently ignored if the row already exists.
+    replace=True: if the row exists and the hash is unchanged the row is left
+    alone (TSR preserved); if the hash changed the row is updated and
+    tsr_token / tsa_timestamp are cleared (they covered the old hash).
     """
     db_p = db_path(ledger_path)
     conn = _connect(db_p)
     try:
         _create_tables(conn)
-        verb = 'INSERT OR REPLACE' if replace else 'INSERT OR IGNORE'
-        conn.execute(
-            f'{verb} INTO chain (voucher_series, voucher_number, voucher_hash) '
-            'VALUES (?,?,?)',
-            (series, number, hash_hex),
-        )
+        if replace:
+            existing = conn.execute(
+                'SELECT voucher_hash FROM chain '
+                'WHERE voucher_series=? AND voucher_number=?',
+                (series, number),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    'INSERT INTO chain (voucher_series, voucher_number, voucher_hash) '
+                    'VALUES (?,?,?)',
+                    (series, number, hash_hex),
+                )
+            elif existing[0] != hash_hex:
+                conn.execute(
+                    'UPDATE chain SET voucher_hash=?, tsr_token=NULL, tsa_timestamp=NULL '
+                    'WHERE voucher_series=? AND voucher_number=?',
+                    (hash_hex, series, number),
+                )
+            # else: hash unchanged — no-op; existing TSR remains valid
+        else:
+            conn.execute(
+                'INSERT OR IGNORE INTO chain (voucher_series, voucher_number, voucher_hash) '
+                'VALUES (?,?,?)',
+                (series, number, hash_hex),
+            )
         conn.commit()
     finally:
         conn.close()
