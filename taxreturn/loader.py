@@ -156,12 +156,18 @@ def _aggregate_ink2r(
         else:
             val = abs(psum)  # '*' fields
 
-        # If magnitude is negative (unexpected direction), flip to companion field
+        # If magnitude is negative (unexpected direction):
+        #   - flip to companion field when one exists (e.g. avsättning↔återföring pf)
+        #   - allow through for Numeriskt_A (signed) fields with no companion
+        #     (e.g. öresavrundning 3740 can legitimately reduce nettoomsättning)
+        #   - drop with warning only for Numeriskt_B (unsigned) fields with no companion
         if val < _Z and fcode in companions:
             fcode = companions[fcode]
             val = -val
+        elif val < _Z and meta.get('datatype') != 'Numeriskt_B':
+            pass  # signed field — keep the negative value
         elif val < _Z:
-            val = _Z  # can't represent; warn
+            val = _Z
             warnings.append(f'Account {acct}: negative contribution to field {fcode} ignored')
 
         raw[fcode] = raw.get(fcode, _Z) + val
