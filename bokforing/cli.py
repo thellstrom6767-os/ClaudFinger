@@ -16,7 +16,8 @@ from . import store as store_module
 from .reports import generate_balansrapport, generate_resultatrapport
 
 from . import sie as sie_module
-from .ledger import (delete_voucher as _delete_voucher_logic, find_account,
+from .ledger import (canonical_ib_text, canonical_voucher_text,
+                     delete_voucher as _delete_voucher_logic, find_account,
                      get_account_history, get_balances, init_from_previous,
                      next_voucher_number, sort_vouchers)
 from .models import Transaction, Voucher
@@ -992,6 +993,272 @@ def sort_cmd(ctx, sort_by, dry_run):
         click.echo(f'  {n_files} underlag file(s) renamed')
     if update_refs:
         click.echo(f'  {len(ref_changes)} label reference(s) updated')
+
+
+# ─── hash ────────────────────────────────────────────────────────────────────
+
+@cli.command('hash')
+@click.option('--dry-run', is_flag=True,
+              help='Compute hashes but do not write them to the chain table.')
+@click.option('--force', is_flag=True,
+              help='Recompute and overwrite all existing chain entries.')
+@click.pass_context
+def hash_cmd(ctx, dry_run, force):
+    """Bootstrap the cryptographic hash chain for IB and all A-series vouchers.
+
+    Computes SHA-256 hashes for the opening balance record (IB) and every
+    A-series voucher that does not yet have an entry in the chain table.
+    Entries already in the chain table are never recomputed — safe to re-run.
+
+    The first hash in the chain covers the IB (opening balance) records.  Each
+    subsequent hash covers one A-series voucher plus a pointer to the previous
+    hash, forming a tamper-evident sequence.
+
+    Run this once on a ledger that predates the hash chain, or after importing
+    old A-series vouchers.  Does not contact a TSA server — use 'lock' afterwards
+    for a trusted timestamp.
+
+    Exits with status 1 if the A-series has a gap (missing voucher number).
+    """
+    import hashlib as _hashlib
+
+    path = _resolve_ledger(ctx.obj)
+    sie = store_module.open_ledger(path)
+
+    # ── IB root ───────────────────────────────────────────────────────────────
+    ib_stored = store_module.get_chain_entry(path, 'IB', 0)
+    if ib_stored and not force:
+        ib_hash = ib_stored
+        click.echo(f'IB  already hashed: {ib_hash[:16]}…')
+    else:
+        ib_text = canonical_ib_text(sie)
+        ib_hash = _hashlib.sha256(ib_text.encode('utf-8')).hexdigest()
+        if not dry_run:
+            store_module.insert_chain_entry(path, 'IB', 0, ib_hash, replace=force)
+        suffix = '  [dry-run]' if dry_run else ''
+        click.echo(f'IB  → {ib_hash[:16]}…{suffix}')
+
+    # ── A-series vouchers ─────────────────────────────────────────────────────
+    a_vouchers = sorted(
+        (v for v in sie.vouchers if v.series == 'A'),
+        key=lambda v: v.number,
+    )
+
+    if not a_vouchers:
+        click.echo('No A-series vouchers.')
+        return
+
+    # Verify no gaps in A numbering
+    for expected, v in enumerate(a_vouchers, start=1):
+        if v.number != expected:
+            click.echo(
+                click.style(
+                    f'Gap in A-series: expected A:{expected}, found A:{v.number}',
+                    fg='red',
+                ),
+                err=True,
+            )
+            sys.exit(1)
+
+    prev_hash = ib_hash
+    new_count = 0
+    already_count = 0
+
+    for v in a_vouchers:
+        existing = store_module.get_chain_entry(path, 'A', v.number)
+        if existing and not force:
+            prev_hash = existing
+            already_count += 1
+            continue
+
+        u_hashes = underlag_module.get_underlag_hashes(path, v.series, v.number)
+        v_text = canonical_voucher_text(v, prev_hash, u_hashes)
+        v_hash = _hashlib.sha256(v_text.encode('utf-8')).hexdigest()
+
+        if not dry_run:
+            store_module.insert_chain_entry(path, 'A', v.number, v_hash, replace=force)
+
+        prev_hash = v_hash
+        new_count += 1
+        suffix = '  [dry-run]' if dry_run else ''
+        click.echo(f'A:{v.number:<4}  → {v_hash[:16]}…{suffix}')
+
+    already_note = f', {already_count} already in chain' if already_count else ''
+    dry_note = '  [dry-run — nothing written]' if dry_run else ''
+    click.echo(f'\n{new_count} voucher(s) hashed{already_note}{dry_note}')
+
+
+# ─── preimage ────────────────────────────────────────────────────────────────
+
+@cli.command('preimage')
+@click.argument('ref')
+@click.pass_context
+def preimage_cmd(ctx, ref):
+    """Display the canonical preimage text for a voucher or the IB root.
+
+    REF: 'IB' for the opening-balance root, 'A:5' or '5' for a voucher.
+
+    The preimage is the exact UTF-8 text whose SHA-256 is stored in the chain
+    table.  Piping the output to sha256sum lets you independently verify the
+    stored hash:
+
+        bokforing preimage A:5 | sha256sum
+    """
+    import hashlib as _hashlib
+
+    path = _resolve_ledger(ctx.obj)
+    sie = store_module.open_ledger(path)
+
+    ref_upper = ref.strip().upper()
+
+    # ── IB root ───────────────────────────────────────────────────────────────
+    if ref_upper == 'IB':
+        text = canonical_ib_text(sie)
+        stored_hash = store_module.get_chain_entry(path, 'IB', 0)
+        computed = _hashlib.sha256(text.encode('utf-8')).hexdigest()
+        click.echo(text, nl=False)
+        _print_hash_footer(computed, stored_hash)
+        return
+
+    # ── A-series voucher ──────────────────────────────────────────────────────
+    series, num_str = (ref.split(':', 1) if ':' in ref else ('A', ref))
+    if not num_str.isdigit():
+        click.echo(f'Invalid reference: {ref}  (expected IB, A:5, or 5)', err=True)
+        sys.exit(1)
+    num = int(num_str)
+
+    v = next((x for x in sie.vouchers if x.series == series and x.number == num), None)
+    if v is None:
+        click.echo(f'Voucher {series}:{num} not found.', err=True)
+        sys.exit(1)
+
+    # Resolve PREV hash
+    if series == 'A' and num == 1:
+        prev_hash = store_module.get_chain_entry(path, 'IB', 0)
+        prev_label = 'IB'
+    else:
+        prev_hash = store_module.get_chain_entry(path, series, num - 1)
+        prev_label = f'{series}:{num - 1}'
+
+    if prev_hash is None:
+        click.echo(
+            f'Cannot show preimage: previous entry ({prev_label}) is not yet hashed.\n'
+            f"Run 'bokforing hash' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    u_hashes = underlag_module.get_underlag_hashes(path, series, num)
+    text = canonical_voucher_text(v, prev_hash, u_hashes)
+    stored_hash = store_module.get_chain_entry(path, series, num)
+    computed = _hashlib.sha256(text.encode('utf-8')).hexdigest()
+    click.echo(text, nl=False)
+    _print_hash_footer(computed, stored_hash)
+
+
+def _print_hash_footer(computed: str, stored: str | None) -> None:
+    if stored is None:
+        status = click.style('not in chain — run hash first', fg='yellow')
+    elif computed == stored:
+        status = click.style('matches chain ✓', fg='green')
+    else:
+        status = click.style(f'MISMATCH — chain has {stored}', fg='red')
+    click.echo(f'\nSHA-256: {computed}  [{status}]', err=True)
+
+
+# ─── lock ────────────────────────────────────────────────────────────────────
+
+@cli.command('lock')
+@click.argument('date', required=False, default=None, metavar='DATE')
+@click.option('--tsa-url', default='http://timestamp.digicert.com', show_default=True,
+              help='RFC 3161 TSA endpoint URL.')
+@click.pass_context
+def lock_cmd(ctx, date, tsa_url):
+    """Timestamp the hash chain with an RFC 3161 trusted timestamp.
+
+    DATE (optional, YYYY-MM-DD): timestamp the last A-series voucher whose
+    economic date is on or before DATE.  If omitted, the overall chain tail
+    (last A-series voucher) is used.
+
+    The .tsr response blob and extracted UTC timestamp are stored in the chain
+    table.  Typical use at fiscal year-end:
+
+        bokforing lock 2025-12-31
+
+    The chain entry for the target voucher must already exist — run
+    'bokforing hash' first if it does not.
+    """
+    from .tsa import request_timestamp
+
+    path = _resolve_ledger(ctx.obj)
+    sie = store_module.open_ledger(path)
+
+    a_vouchers = sorted(
+        (v for v in sie.vouchers if v.series == 'A'),
+        key=lambda v: v.number,
+    )
+    if not a_vouchers:
+        click.echo('No A-series vouchers to lock.', err=True)
+        sys.exit(1)
+
+    # Find target voucher
+    if date:
+        cutoff = date.replace('-', '')   # compare as YYYYMMDD
+        candidates = [v for v in a_vouchers if v.date <= cutoff]
+        if not candidates:
+            click.echo(f'No A-series vouchers on or before {date}.', err=True)
+            sys.exit(1)
+        target = candidates[-1]
+    else:
+        target = a_vouchers[-1]
+
+    # Ensure it is hashed
+    chain_hash = store_module.get_chain_entry(path, 'A', target.number)
+    if chain_hash is None:
+        click.echo(
+            f'A:{target.number} has no chain entry — run "bokforing hash" first.',
+            err=True,
+        )
+        sys.exit(1)
+
+    # Warn if already locked
+    db_p = store_module.db_path(path)
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(db_p)
+    try:
+        row = conn.execute(
+            'SELECT tsa_timestamp FROM chain '
+            'WHERE voucher_series=? AND voucher_number=?',
+            ('A', target.number),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    existing_ts = row[0] if row else None
+    if existing_ts:
+        click.echo(
+            click.style(
+                f'A:{target.number} is already locked: {existing_ts}', fg='yellow'
+            )
+        )
+        if not click.confirm('Overwrite existing timestamp?', default=False):
+            click.echo('Aborted.')
+            return
+
+    click.echo(f'Locking chain at A:{target.number}  ({_fmt_date(target.date)})')
+    click.echo(f'  Hash : {chain_hash[:32]}…')
+    click.echo(f'  TSA  : {tsa_url}')
+
+    try:
+        tsr_bytes, iso_ts = request_timestamp(chain_hash, tsa_url=tsa_url)
+    except RuntimeError as exc:
+        click.echo(click.style(str(exc), fg='red'), err=True)
+        sys.exit(1)
+
+    store_module.update_chain_tsr(path, 'A', target.number, tsr_bytes, iso_ts)
+
+    click.echo(click.style(f'  Time : {iso_ts}  ✓', fg='green'))
+    click.echo(f'  .tsr : {len(tsr_bytes)} bytes stored in chain table')
 
 
 # ─── export ──────────────────────────────────────────────────────────────────

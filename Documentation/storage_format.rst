@@ -114,6 +114,20 @@ Schema
        compressed    INTEGER NOT NULL DEFAULT 0   -- 1 = data is zlib-compressed
    );
 
+   CREATE TABLE chain (
+       voucher_series  TEXT    NOT NULL,   -- 'IB' for root, 'A' for vouchers
+       voucher_number  INTEGER NOT NULL,   -- 0 for IB root
+       voucher_hash    TEXT    NOT NULL,   -- SHA-256 hex of canonical text
+       tsr_token       BLOB,              -- RFC 3161 response; NULL until lock
+       tsa_timestamp   TEXT,              -- ISO timestamp; NULL until lock
+       PRIMARY KEY (voucher_series, voucher_number)
+   );
+
+The ``chain`` table is created on first use (``_create_tables`` is called on
+every open).  ``voucher_hash`` rows are written by ``hash``.  ``tsr_token``
+and ``tsa_timestamp`` are written by ``lock`` for the single tail entry that
+is timestamped.  The hash format is specified in :doc:`hash_format`.
+
 The ``meta`` table stores the ``SIEFile`` header fields as key/value pairs
 (``program``, ``program_version``, ``gen_date``, ``gen_author``, ``org_nr``,
 ``company_name``, ``contact``, ``street``, ``zip_city``, ``phone``,

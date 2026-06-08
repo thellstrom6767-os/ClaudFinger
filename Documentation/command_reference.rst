@@ -806,6 +806,189 @@ found.
    # All 30 vouchers in ledger_2024.se balance. ✓
 
 
+hash
+~~~~
+
+Bootstrap the cryptographic hash chain for the ledger's opening balance (IB)
+and all A-series vouchers.
+
+.. code-block:: text
+
+   Usage: main.py hash [OPTIONS]
+
+.. option:: --dry-run
+
+   Compute hashes and print them without writing anything to the ``chain``
+   table.  Use this to preview the chain before committing.
+
+.. option:: --force
+
+   Recompute and overwrite all existing chain entries.  Use this after
+   changing the canonical format or correcting ledger data.
+
+**What it does**
+
+``hash`` is a one-time bootstrapping command for ledgers that predate the hash
+chain, or after importing old A-series vouchers.  It walks the ledger in order:
+
+1. Computes the IB root hash from the opening balance records (IB) and inserts
+   it into the ``chain`` table as entry ``(IB, 0)``.
+2. Walks A-series vouchers in ascending order (A:1, A:2, …).  For each voucher
+   not yet in the ``chain`` table it computes the canonical SHA-256 hash using
+   the previous entry's hash as ``PREV``, and inserts the result.
+3. Already-hashed entries are skipped — re-runs are safe and idempotent.
+
+The command exits with code 1 if any gap is found in the A-series numbering
+sequence.
+
+For the exact canonical text format used to compute each hash, see
+:doc:`hash_format`.  For how to follow up with a trusted timestamp, see
+:doc:`ledger_attestation` and the planned ``lock`` command.
+
+**Typical workflow**
+
+.. code-block:: bash
+
+   # Preview hashes without writing
+   python main.py hash --dry-run
+
+   # Write to chain table
+   python main.py hash
+
+   # Re-run is a no-op (idempotent)
+   python main.py hash
+   # 0 voucher(s) hashed, 38 already in chain
+
+   # After hashing, lock the chain (see lock command below)
+
+**Sample output (first run)**
+
+.. code-block:: text
+
+   IB  → 97d92b3fd54cc643…
+   A:1     → 22f6e0abe1c602e2…
+   A:2     → a8d3a6d02126d2ce…
+   …
+   A:38    → 32c1409dcbd469ca…
+
+   38 voucher(s) hashed
+
+
+preimage
+~~~~~~~~
+
+Display the canonical preimage text for a voucher or the opening-balance root.
+The preimage is the exact UTF-8 text whose SHA-256 is the entry's chain hash.
+
+.. code-block:: text
+
+   Usage: main.py preimage REF
+
+.. option:: REF
+
+   ``IB`` for the opening-balance root, or a voucher reference such as
+   ``A:5`` or plain ``5`` (defaults to series A).
+
+The canonical text is written to **stdout**; a hash status line is written to
+**stderr**.  This makes the output directly pipeable to ``sha256sum`` for
+independent verification:
+
+.. code-block:: bash
+
+   python main.py preimage A:5 | sha256sum
+
+**Sample output**
+
+.. code-block:: text
+
+   PREV
+   a8d3a6d02126d2cebb25a748282799afb4dff0f4b175389f382b778de5fdda6c
+
+   UNDERLAG
+   c8f3e4311430768f591f53bfc8a92ce53ec9c6065d49564e389aad53c0ce9fdd
+
+   VOUCHER
+   A:3
+   2025-02-12
+   Debiterad preliminärskatt feb
+   1630:-439.00
+   2519:439.00
+
+   SHA-256: 5e074b975291fa49…  [matches chain ✓]
+
+The status suffix on the SHA-256 line is one of:
+
+* ``[matches chain ✓]`` — hash matches the stored chain entry.
+* ``[not in chain — run hash first]`` — entry not yet hashed.
+* ``[MISMATCH — chain has …]`` — stored hash differs; data may have changed.
+
+The ``PREV`` hash is read from the chain table.  If the preceding entry has
+not been hashed yet, the command exits with an error and instructs you to run
+``hash`` first.  For the exact canonical format see :doc:`hash_format`.
+
+
+lock
+~~~~
+
+Request an RFC 3161 trusted timestamp for the hash chain tail and store
+the response in the ``chain`` table.
+
+.. code-block:: text
+
+   Usage: main.py lock [OPTIONS] [DATE]
+
+.. option:: DATE
+
+   Optional ``YYYY-MM-DD`` cutoff.  The last A-series voucher whose economic
+   date is on or before DATE is timestamped.  If omitted, the overall chain
+   tail (last A-series voucher regardless of date) is used.
+
+.. option:: --tsa-url URL
+
+   RFC 3161 TSA endpoint.  Default: ``http://timestamp.digicert.com``
+   (DigiCert free TSA, no authentication required).
+
+**What it does**
+
+1. Resolves the target voucher (last A-series on or before DATE).
+2. Reads its ``voucher_hash`` from the ``chain`` table — exits if missing
+   (run ``hash`` first).
+3. Builds a ``TimeStampRequest`` DER (SHA-256, certReq=TRUE, random nonce).
+4. POSTs to the TSA and checks PKIStatus is Granted.
+5. Verifies the ``TimeStampResponse`` signature against the system CA bundle.
+6. Stores the raw ``.tsr`` BLOB and UTC timestamp in the chain row.
+
+Because the hash chain embeds every prior hash transitively, one timestamp
+on the tail proves the entire preceding sequence existed before that time.
+Run ``lock`` again after adding more vouchers to extend coverage.
+
+If the target voucher is already locked, a confirmation prompt is shown
+before overwriting.
+
+**Example**
+
+.. code-block:: bash
+
+   # Hash first (if not already done)
+   python main.py hash
+
+   # Lock at fiscal year-end
+   python main.py lock 2025-12-31
+
+   # Lock the current tail
+   python main.py lock
+
+**Sample output**
+
+.. code-block:: text
+
+   Locking chain at A:38  (2025-12-17)
+     Hash : 6353f9690cde5cfefb0eb73a8e825a94…
+     TSA  : http://timestamp.digicert.com
+     Time : 2026-06-08T14:40:46+00:00  ✓
+     .tsr : 6007 bytes stored in chain table
+
+
 ----
 
 Querying

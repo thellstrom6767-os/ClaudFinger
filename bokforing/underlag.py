@@ -144,6 +144,30 @@ def renumber_vouchers(
         conn.close()
 
 
+def get_underlag_hashes(ledger_path: str, series: str, number: int) -> dict[str, str]:
+    """Return {derived_filename: sha256_hex} for all underlag attached to a voucher.
+
+    The filename key is the Verifikation_* name used at export time — the same
+    ordering used by the canonical voucher text's UNDERLAG section.
+    """
+    conn = _connect(ledger_path)
+    try:
+        rows = conn.execute(
+            'SELECT original_name, sha256 FROM underlag '
+            'WHERE series=? AND number=? ORDER BY id',
+            (series, number),
+        ).fetchall()
+    finally:
+        conn.close()
+    total = len(rows)
+    result: dict[str, str] = {}
+    for seq, (original_name, sha256) in enumerate(rows, start=1):
+        ext = Path(original_name).suffix.lower()
+        filename = _stored_filename(series, number, seq, total, ext)
+        result[filename] = sha256 or ''
+    return result
+
+
 def get_data(ledger_path: str, file_id: int) -> bytes | None:
     """Return the decompressed data for a file, or None if not found."""
     conn = _connect(ledger_path)

@@ -81,6 +81,14 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             sha256        TEXT,
             compressed    INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS chain (
+            voucher_series  TEXT    NOT NULL,
+            voucher_number  INTEGER NOT NULL,
+            voucher_hash    TEXT    NOT NULL,
+            tsr_token       BLOB,
+            tsa_timestamp   TEXT,
+            PRIMARY KEY (voucher_series, voucher_number)
+        );
     ''')
     conn.commit()
     # Add columns to existing DBs that predate them.
@@ -299,6 +307,70 @@ def save_ledger(ledger_path: str, sie: SIEFile) -> None:
         _create_tables(conn)
         with conn:
             _save_to_db(conn, sie)
+    finally:
+        conn.close()
+
+
+def get_chain_entry(ledger_path: str, series: str, number: int) -> str | None:
+    """Return the stored voucher_hash for (series, number), or None if not yet hashed."""
+    db_p = db_path(ledger_path)
+    conn = _connect(db_p)
+    try:
+        _create_tables(conn)
+        row = conn.execute(
+            'SELECT voucher_hash FROM chain WHERE voucher_series=? AND voucher_number=?',
+            (series, number),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def insert_chain_entry(
+    ledger_path: str, series: str, number: int, hash_hex: str, replace: bool = False
+) -> None:
+    """Insert a chain row for (series, number).
+
+    If replace=False (default) the insert is silently ignored when the row
+    already exists.  If replace=True the existing hash is overwritten.
+    """
+    db_p = db_path(ledger_path)
+    conn = _connect(db_p)
+    try:
+        _create_tables(conn)
+        verb = 'INSERT OR REPLACE' if replace else 'INSERT OR IGNORE'
+        conn.execute(
+            f'{verb} INTO chain (voucher_series, voucher_number, voucher_hash) '
+            'VALUES (?,?,?)',
+            (series, number, hash_hex),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_chain_tsr(
+    ledger_path: str, series: str, number: int,
+    tsr_bytes: bytes, tsa_timestamp: str,
+) -> None:
+    """Store the RFC 3161 TSR blob and timestamp on an existing chain row.
+
+    Raises RuntimeError if the chain row does not exist (run hash first).
+    """
+    db_p = db_path(ledger_path)
+    conn = _connect(db_p)
+    try:
+        _create_tables(conn)
+        conn.execute(
+            'UPDATE chain SET tsr_token=?, tsa_timestamp=? '
+            'WHERE voucher_series=? AND voucher_number=?',
+            (tsr_bytes, tsa_timestamp, series, number),
+        )
+        if conn.execute('SELECT changes()').fetchone()[0] == 0:
+            raise RuntimeError(
+                f'No chain entry for {series}:{number} — run "bokforing hash" first'
+            )
+        conn.commit()
     finally:
         conn.close()
 

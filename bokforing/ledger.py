@@ -7,6 +7,53 @@ from decimal import Decimal
 from .models import Account, SIEFile, Voucher
 from .sie import PROGRAM_NAME, PROGRAM_VERSION
 
+_ZERO_HASH = '0' * 64
+
+
+def _iso_date(d: str) -> str:
+    """Convert YYYYMMDD to YYYY-MM-DD; pass through anything else."""
+    if len(d) == 8 and d.isdigit():
+        return f'{d[:4]}-{d[4:6]}-{d[6:]}'
+    return d
+
+
+def canonical_ib_text(sie: SIEFile) -> str:
+    """Return the canonical UTF-8 text whose SHA-256 is the IB chain root hash."""
+    year = sie.year_begins[:4]
+    lines = ['PREV', _ZERO_HASH, '', 'IB', year]
+    for acct, amount in sorted(sie.ib.items()):
+        if amount != Decimal('0'):
+            lines.append(f'{acct}:{amount:.2f}')
+    return '\n'.join(lines) + '\n'
+
+
+def canonical_voucher_text(
+    v: Voucher,
+    prev_hash: str,
+    underlag_hashes: dict[str, str],
+) -> str:
+    """Return the canonical UTF-8 text whose SHA-256 is this voucher's chain hash.
+
+    underlag_hashes maps derived filename → sha256_hex for every attached file.
+    Pass an empty dict when there are no attachments.
+    """
+    lines = ['PREV', prev_hash, '']
+    if underlag_hashes:
+        lines.append('UNDERLAG')
+        for filename in sorted(underlag_hashes):
+            lines.append(underlag_hashes[filename])
+        lines.append('')
+    lines += [
+        'VOUCHER',
+        f'{v.series}:{v.number}',
+        _iso_date(v.date),
+        _iso_date(v.reg_date),
+        v.label,
+    ]
+    for t in sorted(v.transactions, key=lambda t: t.account):
+        lines.append(f'{t.account}:{t.amount:.2f}')
+    return '\n'.join(lines) + '\n'
+
 
 def get_balances(sie: SIEFile) -> dict[str, Decimal]:
     """Running balances = IB + all posted transactions. Zero balances excluded."""
