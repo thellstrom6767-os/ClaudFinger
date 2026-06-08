@@ -109,7 +109,9 @@ Schema
        number        INTEGER NOT NULL,
        original_name TEXT NOT NULL,
        added_at      TEXT NOT NULL,       -- ISO date (YYYY-MM-DD)
-       data          BLOB NOT NULL
+       data          BLOB NOT NULL,       -- zlib-compressed when compressed=1
+       sha256        TEXT,               -- hex SHA-256 of original (decompressed) data; NULL only in legacy rows (backfilled on open)
+       compressed    INTEGER NOT NULL DEFAULT 0   -- 1 = data is zlib-compressed
    );
 
 The ``meta`` table stores the ``SIEFile`` header fields as key/value pairs
@@ -161,6 +163,18 @@ The ``export`` command and ``sie5export`` write the BLOBs to disk using
 this convention.  The ``underlag open`` command extracts a BLOB to
 ``/tmp/bokforing_underlag/{id}_{original_name}`` and opens it with
 ``xdg-open``.
+
+**Compression** — new BLOBs are stored zlib-compressed (``compressed=1``).
+Existing rows added before this feature have ``compressed=0`` and are stored
+as raw bytes.  All read paths (``get_data``, ``open_file``, ``export_underlag``,
+``export_sie``) decompress transparently based on the flag.
+
+**Integrity** — the ``sha256`` column stores the hex SHA-256 digest of the
+*original, decompressed* data at insert time.  Existing DBs are backfilled
+automatically on ``open_ledger``.  Both ``export_underlag`` and ``export_sie``
+recompute the digest from the decompressed data after writing the file and
+raise ``RuntimeError`` if there is a mismatch, catching in-database corruption
+before it reaches exported files.
 
 
 SIE 4 Ledger File (``.se``)

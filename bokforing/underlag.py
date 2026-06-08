@@ -8,8 +8,10 @@ export_underlag below).  File naming uses the Verifikation convention:
   multi-file   → Verifikation_A5[1av2].pdf, Verifikation_A5[2av2].pdf
 """
 from __future__ import annotations
+import hashlib
 import os
 import sqlite3
+import zlib
 from datetime import date
 from pathlib import Path
 
@@ -31,14 +33,16 @@ def add_file(ledger_path: str, series: str, number: int, src_path: str) -> str:
     """Read src_path and store its contents as a BLOB. Returns the derived stored filename."""
     original_name = os.path.basename(src_path)
     with open(src_path, 'rb') as f:
-        data = f.read()
+        raw = f.read()
 
+    digest = hashlib.sha256(raw).hexdigest()
+    blob = zlib.compress(raw)
     conn = _connect(ledger_path)
     try:
         conn.execute(
-            'INSERT INTO underlag (series, number, original_name, added_at, data) '
-            'VALUES (?,?,?,?,?)',
-            (series, number, original_name, date.today().isoformat(), data),
+            'INSERT INTO underlag (series, number, original_name, added_at, data, sha256, compressed) '
+            'VALUES (?,?,?,?,?,?,1)',
+            (series, number, original_name, date.today().isoformat(), blob, digest),
         )
         conn.commit()
         total = conn.execute(
@@ -141,15 +145,18 @@ def renumber_vouchers(
 
 
 def get_data(ledger_path: str, file_id: int) -> bytes | None:
-    """Return the raw BLOB for a file, or None if not found."""
+    """Return the decompressed data for a file, or None if not found."""
     conn = _connect(ledger_path)
     try:
         row = conn.execute(
-            'SELECT data FROM underlag WHERE id=?', (file_id,)
+            'SELECT data, compressed FROM underlag WHERE id=?', (file_id,)
         ).fetchone()
     finally:
         conn.close()
-    return row[0] if row else None
+    if not row:
+        return None
+    data, compressed = row
+    return zlib.decompress(data) if compressed else data
 
 
 def open_file(ledger_path: str, file_id: int) -> str | None:
@@ -161,18 +168,19 @@ def open_file(ledger_path: str, file_id: int) -> str | None:
     conn = _connect(ledger_path)
     try:
         row = conn.execute(
-            'SELECT original_name, data FROM underlag WHERE id=?', (file_id,)
+            'SELECT original_name, data, compressed FROM underlag WHERE id=?', (file_id,)
         ).fetchone()
     finally:
         conn.close()
     if not row:
         return None
-    original_name, data = row
+    original_name, data, compressed = row
+    raw = zlib.decompress(data) if compressed else data
     tmp_dir = '/tmp/bokforing_underlag'
     os.makedirs(tmp_dir, exist_ok=True)
     tmp_path = os.path.join(tmp_dir, f'{file_id}_{original_name}')
     with open(tmp_path, 'wb') as f:
-        f.write(data)
+        f.write(raw)
     return tmp_path
 
 
@@ -184,7 +192,7 @@ def export_underlag(ledger_path: str, underlag_dir: str) -> int:
     conn = _connect(ledger_path)
     try:
         rows = conn.execute(
-            'SELECT series, number, original_name, data FROM underlag '
+            'SELECT series, number, original_name, data, sha256, compressed FROM underlag '
             'ORDER BY series, number, id'
         ).fetchall()
     finally:
@@ -197,17 +205,26 @@ def export_underlag(ledger_path: str, underlag_dir: str) -> int:
 
     from collections import defaultdict
     groups: dict[tuple[str, int], list] = defaultdict(list)
-    for series, number, original_name, data in rows:
-        groups[(series, number)].append((original_name, data))
+    for series, number, original_name, data, sha256, compressed in rows:
+        groups[(series, number)].append((original_name, data, sha256, compressed))
 
     count = 0
     for (series, number), files in sorted(groups.items()):
         total = len(files)
-        for seq, (original_name, data) in enumerate(files, start=1):
+        for seq, (original_name, data, stored_sha256, compressed) in enumerate(files, start=1):
             ext = Path(original_name).suffix.lower()
             filename = _stored_filename(series, number, seq, total, ext)
-            with open(os.path.join(underlag_dir, filename), 'wb') as f:
-                f.write(data)
+            raw = zlib.decompress(data) if compressed else data
+            out_file = os.path.join(underlag_dir, filename)
+            with open(out_file, 'wb') as f:
+                f.write(raw)
+            if stored_sha256 is not None:
+                actual = hashlib.sha256(raw).hexdigest()
+                if actual != stored_sha256:
+                    raise RuntimeError(
+                        f'SHA-256 mismatch for {filename}: '
+                        f'stored={stored_sha256} actual={actual}'
+                    )
             count += 1
 
     return count

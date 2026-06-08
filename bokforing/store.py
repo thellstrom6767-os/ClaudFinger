@@ -6,9 +6,11 @@ are never read after the first open (which auto-migrates from .se to DB).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
+import zlib
 from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
@@ -75,10 +77,29 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             number        INTEGER NOT NULL,
             original_name TEXT NOT NULL,
             added_at      TEXT NOT NULL,
-            data          BLOB NOT NULL
+            data          BLOB NOT NULL,
+            sha256        TEXT,
+            compressed    INTEGER NOT NULL DEFAULT 0
         );
     ''')
     conn.commit()
+    # Add columns to existing DBs that predate them.
+    for ddl in (
+        'ALTER TABLE underlag ADD COLUMN sha256 TEXT',
+        'ALTER TABLE underlag ADD COLUMN compressed INTEGER NOT NULL DEFAULT 0',
+    ):
+        try:
+            conn.execute(ddl)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    # Backfill sha256 for any rows that are still NULL.
+    nulls = conn.execute('SELECT id, data FROM underlag WHERE sha256 IS NULL').fetchall()
+    if nulls:
+        for row_id, data in nulls:
+            digest = hashlib.sha256(data).hexdigest()
+            conn.execute('UPDATE underlag SET sha256=? WHERE id=?', (digest, row_id))
+        conn.commit()
 
 
 def _load_from_db(conn: sqlite3.Connection) -> SIEFile:
@@ -259,11 +280,13 @@ def _migrate_underlag(conn: sqlite3.Connection, old_db: str, old_dir: str) -> No
         if not os.path.exists(file_path_on_disk):
             continue
         with open(file_path_on_disk, 'rb') as f:
-            data = f.read()
+            raw = f.read()
+        digest = hashlib.sha256(raw).hexdigest()
+        blob = zlib.compress(raw)
         conn.execute(
-            'INSERT INTO underlag (series, number, original_name, added_at, data) '
-            'VALUES (?,?,?,?,?)',
-            (series, number, original_name, added_at, data),
+            'INSERT INTO underlag (series, number, original_name, added_at, data, sha256, compressed) '
+            'VALUES (?,?,?,?,?,?,1)',
+            (series, number, original_name, added_at, blob, digest),
         )
     conn.commit()
 
@@ -291,7 +314,7 @@ def export_sie(ledger_path: str, out_path: str) -> None:
     try:
         sie = _load_from_db(conn)
         rows = conn.execute(
-            'SELECT series, number, original_name, data FROM underlag '
+            'SELECT series, number, original_name, data, sha256, compressed FROM underlag '
             'ORDER BY series, number, id'
         ).fetchall()
     finally:
@@ -305,15 +328,24 @@ def export_sie(ledger_path: str, out_path: str) -> None:
         underlag_dir = base + '_underlag'
         os.makedirs(underlag_dir, exist_ok=True)
         groups: dict[tuple[str, int], list] = defaultdict(list)
-        for series, number, original_name, data in rows:
-            groups[(series, number)].append((original_name, data))
+        for series, number, original_name, data, sha256, compressed in rows:
+            groups[(series, number)].append((original_name, data, sha256, compressed))
         for (series, number), files in sorted(groups.items()):
             total = len(files)
-            for seq, (original_name, data) in enumerate(files, start=1):
+            for seq, (original_name, data, stored_sha256, compressed) in enumerate(files, start=1):
                 ext = Path(original_name).suffix.lower()
                 if total == 1:
                     filename = f'Verifikation_{series}{number}{ext}'
                 else:
                     filename = f'Verifikation_{series}{number}[{seq}av{total}]{ext}'
-                with open(os.path.join(underlag_dir, filename), 'wb') as f:
-                    f.write(data)
+                raw = zlib.decompress(data) if compressed else data
+                out_file = os.path.join(underlag_dir, filename)
+                with open(out_file, 'wb') as f:
+                    f.write(raw)
+                if stored_sha256 is not None:
+                    actual = hashlib.sha256(raw).hexdigest()
+                    if actual != stored_sha256:
+                        raise RuntimeError(
+                            f'SHA-256 mismatch for {filename}: '
+                            f'stored={stored_sha256} actual={actual}'
+                        )
