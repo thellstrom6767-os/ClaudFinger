@@ -491,23 +491,165 @@ def history(ctx, account):
 # ─── verify ──────────────────────────────────────────────────────────────────
 
 @cli.command()
+@click.option('--chain', 'check_chain', is_flag=True, default=False,
+              help='Also verify the cryptographic hash chain.')
+@click.option('--tsr', 'check_tsr', is_flag=True, default=False,
+              help='Also verify stored TSR signatures via openssl (implies --chain).')
 @click.pass_context
-def verify(ctx):
-    """Verify that all vouchers balance (transactions sum to zero)."""
+def verify(ctx, check_chain, check_tsr):
+    """Verify that all vouchers balance (transactions sum to zero).
+
+    With --chain: recomputes every SHA-256 chain hash from scratch and
+    compares against the stored chain table entries.  Reports unchained
+    vouchers, hash mismatches, and TSR coverage per series.
+
+    With --tsr: additionally verifies each stored TSR's cryptographic
+    signature against the system CA bundle (uses openssl ts -verify).
+    Implies --chain.
+    """
+    import hashlib as _hashlib
+    from collections import defaultdict
+
     path = _resolve_ledger(ctx.obj)
     sie = store_module.open_ledger(path)
 
+    # ── Balance check ─────────────────────────────────────────────────────────
     errors = [(v, v.total()) for v in sie.vouchers if v.total() != 0]
 
     if errors:
-        click.echo(click.style(f'{len(errors)} unbalanced voucher(s) in {path}:', fg='red'))
+        click.echo(click.style(f'{len(errors)} unbalanced voucher(s):', fg='red'))
         for v, total in errors:
             click.echo(f'  {v.series}:{v.number:<4}  {_fmt_date(v.date)}  '
                        f'{v.label:<35}  off by {total:+.2f}')
-        sys.exit(1)
     else:
         click.echo(click.style(
-            f'All {len(sie.vouchers)} vouchers in {path} balance. ✓', fg='green'))
+            f'Balance:  all {len(sie.vouchers)} vouchers sum to zero. ✓', fg='green'))
+
+    # ── Chain integrity ───────────────────────────────────────────────────────
+    if not (check_chain or check_tsr):
+        if errors:
+            sys.exit(1)
+        return
+
+    click.echo()
+
+    db_p = store_module.db_path(path)
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(db_p)
+    try:
+        chain_rows = {
+            (r[0], r[1]): (r[2], r[3], r[4])
+            for r in conn.execute(
+                'SELECT voucher_series, voucher_number, voucher_hash, '
+                'tsr_token, tsa_timestamp FROM chain'
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+    if not chain_rows:
+        click.echo(click.style('Chain:    no entries — run "bokforing hash" first.', fg='yellow'))
+        if errors:
+            sys.exit(1)
+        return
+
+    # Recompute IB hash
+    ib_text = canonical_ib_text(sie)
+    ib_hash = _hashlib.sha256(ib_text.encode('utf-8')).hexdigest()
+    stored_ib = chain_rows.get(('IB', 0), (None, None, None))[0]
+
+    chain_ok = True
+    if stored_ib is None:
+        click.echo(click.style('IB        not in chain', fg='yellow'))
+        chain_ok = False
+    elif stored_ib != ib_hash:
+        click.echo(click.style(f'IB        MISMATCH  stored={stored_ib[:16]}…  computed={ib_hash[:16]}…', fg='red'))
+        chain_ok = False
+    else:
+        click.echo(click.style(f'IB        {ib_hash[:16]}…  ✓', fg='green'))
+
+    series_groups: dict[str, list] = defaultdict(list)
+    for v in sie.vouchers:
+        series_groups[v.series].append(v)
+
+    series_chain_ok = True
+    for series_id in sorted(series_groups):
+        vouchers = sorted(series_groups[series_id], key=lambda v: v.number)
+        prev_hash = ib_hash
+        s_ok = True
+        unchained = 0
+        mismatches = 0
+        tail_v = vouchers[-1]
+
+        for v in vouchers:
+            u_hashes = underlag_module.get_underlag_hashes(path, v.series, v.number)
+            v_text = canonical_voucher_text(v, prev_hash, u_hashes)
+            computed = _hashlib.sha256(v_text.encode('utf-8')).hexdigest()
+            stored_hash, tsr_token, tsa_ts = chain_rows.get((series_id, v.number), (None, None, None))
+
+            if stored_hash is None:
+                unchained += 1
+                s_ok = False
+                # Continue walking with computed hash so subsequent entries can still be checked
+                prev_hash = computed
+            elif stored_hash != computed:
+                click.echo(click.style(
+                    f'  {series_id}:{v.number:<4}  MISMATCH  stored={stored_hash[:16]}…  computed={computed[:16]}…',
+                    fg='red',
+                ))
+                mismatches += 1
+                s_ok = False
+                prev_hash = stored_hash  # keep chain consistent with what's stored
+            else:
+                prev_hash = computed
+
+        tail_stored, tail_tsr, tail_ts = chain_rows.get((series_id, tail_v.number), (None, None, None))
+        tsr_note = ''
+        if tail_ts:
+            tsr_note = f'  locked {tail_ts}'
+        elif tail_stored:
+            tsr_note = '  (no TSR)'
+
+        if unchained and mismatches == 0:
+            status = click.style(f'{series_id}  {unchained} unchained / {len(vouchers)}', fg='yellow')
+        elif mismatches:
+            status = click.style(f'{series_id}  {mismatches} MISMATCH(ES)', fg='red')
+            series_chain_ok = False
+        else:
+            status = click.style(f'{series_id}  {len(vouchers)} vouchers  ✓', fg='green')
+        click.echo(f'  {status}{tsr_note}')
+
+        if not s_ok:
+            series_chain_ok = False
+
+    # ── TSR verification ──────────────────────────────────────────────────────
+    if check_tsr:
+        click.echo()
+        from .tsa import verify_tsr_by_digest
+        import certifi as _certifi
+        ca = _certifi.where()
+        tsr_errors = 0
+        for series_id in sorted(series_groups):
+            vouchers = sorted(series_groups[series_id], key=lambda v: v.number)
+            tail_v = vouchers[-1]
+            stored_hash, tsr_token, tsa_ts = chain_rows.get(
+                (series_id, tail_v.number), (None, None, None))
+            if not tsr_token:
+                click.echo(f'  TSR {series_id}:{tail_v.number}  no TSR stored')
+                continue
+            try:
+                verify_tsr_by_digest(bytes(tsr_token), stored_hash, ca)
+                click.echo(click.style(
+                    f'  TSR {series_id}:{tail_v.number}  signature valid  {tsa_ts}  ✓', fg='green'))
+            except RuntimeError as exc:
+                click.echo(click.style(
+                    f'  TSR {series_id}:{tail_v.number}  INVALID: {exc}', fg='red'))
+                tsr_errors += 1
+        if tsr_errors:
+            chain_ok = False
+
+    if errors or not chain_ok or not series_chain_ok:
+        sys.exit(1)
 
 
 # ─── scan ────────────────────────────────────────────────────────────────────

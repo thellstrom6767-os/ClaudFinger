@@ -790,20 +790,51 @@ renumbering still proceeds).
 verify
 ~~~~~~
 
-Check that every voucher in the ledger is balanced (all transaction
-amounts sum to zero).
+Check ledger integrity.  Without flags, checks that every voucher's
+transactions sum to zero.  Add ``--chain`` to also verify the
+cryptographic hash chain, or ``--tsr`` to additionally validate stored
+RFC 3161 timestamp signatures.
 
 .. code-block:: text
 
    Usage: main.py verify [OPTIONS]
 
-Exits with code 0 on success, code 1 if any unbalanced vouchers are
-found.
+.. option:: --chain
+
+   Recompute every SHA-256 chain hash from scratch and compare against the
+   stored ``chain`` table entries.  Reports unchained vouchers, hash
+   mismatches, and TSR coverage per series.
+
+.. option:: --tsr
+
+   Additionally verify each stored RFC 3161 TSR's cryptographic signature
+   against the system CA bundle using ``openssl ts -verify``.  Implies
+   ``--chain``.  Verification is performed against the stored hash using
+   ``-digest`` (no original request required).
+
+Exits with code 0 on success, code 1 on any failure.
 
 .. code-block:: bash
 
+   # Quick balance check
    python main.py verify
-   # All 30 vouchers in ledger_2024.se balance. ✓
+
+   # Balance + hash chain integrity
+   python main.py verify --chain
+
+   # Full audit including TSR signature
+   python main.py verify --tsr
+
+**Sample output (``--tsr``)**
+
+.. code-block:: text
+
+   Balance:  all 38 vouchers sum to zero. ✓
+
+   IB        fe5602cf284648b7…  ✓
+     A  38 vouchers  ✓  locked 2026-06-08T15:08:30+00:00
+
+     TSR A:38  signature valid  2026-06-08T15:08:30+00:00  ✓
 
 
 hash

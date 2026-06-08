@@ -144,6 +144,31 @@ def _verify_tsr(tsr_bytes: bytes, req_der: bytes, ca_cert_path: str) -> None:
         os.unlink(req_path)
 
 
+def verify_tsr_by_digest(tsr_bytes: bytes, hash_hex: str, ca_cert_path: str) -> None:
+    """Verify a stored TSR against a known hash using openssl ts -verify -digest.
+
+    Does not require the original TimeStampRequest (no nonce check).
+    Raises RuntimeError if the signature is invalid or the digest does not match.
+    """
+    with tempfile.NamedTemporaryFile(suffix='.tsr', delete=False) as f:
+        f.write(tsr_bytes)
+        tsr_path = f.name
+    try:
+        result = subprocess.run(
+            ['openssl', 'ts', '-verify',
+             '-digest', hash_hex,
+             '-in', tsr_path,
+             '-CAfile', ca_cert_path],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f'TSA response verification failed:\n{result.stderr.strip()}'
+            )
+    finally:
+        os.unlink(tsr_path)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def request_timestamp(
