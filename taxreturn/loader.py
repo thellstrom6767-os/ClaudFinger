@@ -63,23 +63,28 @@ def _find_ink2r_field(
 
 
 def _companion_map(bas_map: dict) -> dict[str, str]:
-    """Build {netto_plus_field: netto_minus_field, ...} from bas_ink2r."""
-    by_sig: dict[tuple, dict] = {}
+    """Build {netto_plus_field: netto_minus_field, ...} from bas_ink2r.
+
+    Two fields are companions when they share at least one account number
+    and carry opposite netto indicators ('+' vs '-').  This handles cases
+    like 7420/7525 (periodiseringsfond) where the range sets differ slightly.
+    """
+    acct_nettos: dict[int, dict[str, str]] = {}
     for fcode, ranges in bas_map.items():
-        nettos = {r['netto'] for r in ranges}
-        if None in nettos or not any(nettos):
-            continue
-        sig = tuple(sorted((r['min'], r['max']) for r in ranges))
-        if sig not in by_sig:
-            by_sig[sig] = {}
-        for n in nettos:
-            if n:
-                by_sig[sig][n] = fcode
+        for r in ranges:
+            netto = r.get('netto')
+            if not netto:
+                continue
+            for n in range(r['min'], r['max'] + 1):
+                if n not in r.get('excl', []):
+                    if n not in acct_nettos:
+                        acct_nettos[n] = {}
+                    acct_nettos[n][netto] = fcode
     result: dict[str, str] = {}
-    for d in by_sig.values():
-        if '+' in d and '-' in d:
-            result[d['+']] = d['-']
-            result[d['-']] = d['+']
+    for nettos in acct_nettos.values():
+        if '+' in nettos and '-' in nettos:
+            result[nettos['+']] = nettos['-']
+            result[nettos['-']] = nettos['+']
     return result
 
 
