@@ -271,12 +271,16 @@ def list_vouchers(ctx, n, show_all):
     vouchers = sie.vouchers if show_all else sie.vouchers[-n:]
     total = len(sie.vouchers)
 
+    with_docs = {(r['series'], r['number'])
+                 for r in underlag_module.list_all(path)}
+
     click.echo(f'\nVouchers — {path}  ({total} total)')
-    click.echo(f'  {"Ref":<7}  {"Date":10}  {"Description":<36}  {"Debit":>12}')
-    click.echo('  ' + '─' * 72)
+    click.echo(f'  {"Ref":<7}  {"Date":10}  {"Description":<36}  {"Debit":>12}  U')
+    click.echo('  ' + '─' * 75)
     for v in vouchers:
         debit = sum(t.amount for t in v.transactions if t.amount > 0)
-        click.echo(f'  {v.series}:{v.number:<5}  {_fmt_date(v.date):10}  {v.label:<36}  {debit:>12,.2f}')
+        flag = '*' if (v.series, v.number) in with_docs else ' '
+        click.echo(f'  {v.series}:{v.number:<5}  {_fmt_date(v.date):10}  {v.label:<36}  {debit:>12,.2f}  {flag}')
     if not show_all and total > n:
         click.echo(f'  … {total - n} earlier vouchers hidden (use --all to show)')
     click.echo()
