@@ -360,7 +360,7 @@ def canonical_voucher_text(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Supporting-document hashing
+# Supporting-document hashing and manifest cross-check
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_underlag_hashes(
@@ -389,6 +389,45 @@ def build_underlag_hashes(
             continue
         hashes[filename] = hashlib.sha256(data).hexdigest()
     return hashes
+
+
+def check_underlag_vs_manifest(
+    computed: dict[str, str],
+    manifest_entries: list[dict],
+) -> list[dict]:
+    """Cross-check computed underlag hashes against manifest entries.
+
+    computed         is the dict returned by build_underlag_hashes:
+                     {Verifikation_filename: sha256_hex}
+    manifest_entries is the 'underlag' list from the manifest voucher record:
+                     [{'filename': str, 'sha256': str}, …]
+
+    Returns one record per filename appearing in either source, sorted
+    alphabetically.  Each record:
+        filename   str
+        computed   str | None    SHA-256 derived from the document BLOB in the zip
+        manifest   str | None    SHA-256 recorded in manifest.json
+        ok         bool          True iff both sides are present and equal
+
+    A missing-from-either-side entry is always reported as not ok, so callers
+    can surface documents that were added or removed after the manifest was
+    generated.
+    """
+    manifest_map = {e['filename']: e['sha256'] for e in manifest_entries}
+    all_filenames = sorted(set(computed.keys()) | set(manifest_map.keys()))
+    return [
+        {
+            'filename': fn,
+            'computed': computed.get(fn),
+            'manifest': manifest_map.get(fn),
+            'ok': (
+                computed.get(fn) is not None
+                and manifest_map.get(fn) is not None
+                and computed.get(fn) == manifest_map.get(fn)
+            ),
+        }
+        for fn in all_filenames
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,15 +506,17 @@ def compute_verification(
 
     IB result keys:   preimage, computed, manifest_hash, ok
     Voucher result keys:
-        voucher       original dict from parse_sie5_xml
-        preimage      canonical preimage string
-        underlag      dict[filename, sha256]  (computed from zip)
-        computed      str   SHA-256 of preimage
-        manifest_hash str | None
-        hash_ok       bool
-        tsr_time      str | None
-        tsr_ok        bool | None  (None = no TSR present)
-        tsr_msg       str | None
+        voucher          original dict from parse_sie5_xml
+        preimage         canonical preimage string
+        underlag         dict[filename, sha256]  (computed from zip)
+        underlag_checks  list[{filename, computed, manifest, ok}]
+        underlag_ok      bool   True iff all underlag hashes match (or none present)
+        computed         str   SHA-256 of preimage
+        manifest_hash    str | None
+        hash_ok          bool
+        tsr_time         str | None
+        tsr_ok           bool | None  (None = no TSR present)
+        tsr_msg          str | None
     """
     ib_preimage = canonical_ib_text(ledger['year_begins'], ledger['ib'])
     ib_computed = hashlib.sha256(ib_preimage.encode('utf-8')).hexdigest()
@@ -517,6 +558,12 @@ def compute_verification(
             manifest_hash = mentry['hash'] if mentry else None
             hash_ok       = computed == manifest_hash
 
+            # Underlag cross-check — compare hashes computed from the zip BLOBs
+            # against the hashes recorded in manifest.json for this voucher.
+            manifest_underlag = mentry['underlag'] if mentry else []
+            underlag_checks   = check_underlag_vs_manifest(underlag, manifest_underlag)
+            underlag_ok       = all(c['ok'] for c in underlag_checks) if underlag_checks else True
+
             # TSR — verify against the *computed* hash so we confirm the TSR
             # stamps the data we independently derived, not just the manifest's claim
             tsr_ok   = None
@@ -533,15 +580,17 @@ def compute_verification(
                     tsr_ok, tsr_msg = verify_tsr(tsr_bytes, computed, ca_bundle)
 
             series_results.append({
-                'voucher':       v,
-                'preimage':      preimage,
-                'underlag':      underlag,
-                'computed':      computed,
-                'manifest_hash': manifest_hash,
-                'hash_ok':       hash_ok,
-                'tsr_time':      tsr_time,
-                'tsr_ok':        tsr_ok,
-                'tsr_msg':       tsr_msg,
+                'voucher':          v,
+                'preimage':         preimage,
+                'underlag':         underlag,
+                'underlag_checks':  underlag_checks,
+                'underlag_ok':      underlag_ok,
+                'computed':         computed,
+                'manifest_hash':    manifest_hash,
+                'hash_ok':          hash_ok,
+                'tsr_time':         tsr_time,
+                'tsr_ok':           tsr_ok,
+                'tsr_msg':          tsr_msg,
             })
 
             prev_hash = computed   # advance the chain regardless of match status
@@ -552,12 +601,14 @@ def compute_verification(
 
 
 def _result_ok(result: dict) -> bool:
-    """Return True iff every hash matched and every TSR (if present) was valid."""
+    """Return True iff every hash matched, every underlag cross-check passed, and every TSR (if present) was valid."""
     if not result['ib']['ok']:
         return False
     for entries in result['series'].values():
         for e in entries:
             if not e['hash_ok']:
+                return False
+            if not e['underlag_ok']:
                 return False
             if e['tsr_ok'] is False:
                 return False
@@ -587,9 +638,10 @@ def render_pass1(result: dict) -> None:
     for series_id, entries in sorted(result['series'].items()):
         n = len(entries)
 
-        hash_failures = [e for e in entries if not e['hash_ok']]
-        tsr_failures  = [e for e in entries if e['tsr_ok'] is False]
-        series_ok     = not hash_failures and not tsr_failures
+        hash_failures     = [e for e in entries if not e['hash_ok']]
+        underlag_failures = [e for e in entries if not e['underlag_ok']]
+        tsr_failures      = [e for e in entries if e['tsr_ok'] is False]
+        series_ok         = not hash_failures and not underlag_failures and not tsr_failures
 
         # Tail TSR info (the last entry that has a timestamp)
         tail_tsr_time = next(
@@ -615,6 +667,11 @@ def render_pass1(result: dict) -> None:
                     f'{series_id}:{e["voucher"]["number"]}' for e in hash_failures
                 )
                 parts.append(f'hash mismatch at {refs}')
+            if underlag_failures:
+                refs = ', '.join(
+                    f'{series_id}:{e["voucher"]["number"]}' for e in underlag_failures
+                )
+                parts.append(f'underlag mismatch at {refs}')
             if tsr_failures:
                 refs = ', '.join(
                     f'{series_id}:{e["voucher"]["number"]}' for e in tsr_failures
@@ -665,6 +722,29 @@ def _print_hash_comparison(computed: str, manifest_hash: Optional[str], ok: bool
         print(f'  SHA-256 (manifest):   {_red(manifest_hash)}  {_tick(False)}')
 
 
+def _print_underlag_checks(checks: list[dict]) -> None:
+    """Print underlag cross-check results (computed-from-zip vs manifest.json).
+
+    Only prints the block when there are underlag files to report.  For each
+    file, one summary line is printed; on mismatch the two hashes are shown
+    on separate indented lines.
+    """
+    if not checks:
+        return
+    print('  Underlag (computed from zip vs manifest):')
+    for c in checks:
+        tick = _tick(c['ok'])
+        if c['ok']:
+            print(f'    {tick}  {c["filename"]}')
+        else:
+            comp = c['computed'] if c['computed'] else _red('(missing)')
+            mani = c['manifest'] if c['manifest'] else _red('(missing)')
+            print(f'    {tick}  {c["filename"]}')
+            if c['computed'] != c['manifest']:
+                print(f'         computed:  {comp}')
+                print(f'         manifest:  {mani}')
+
+
 def _print_tsr(tsr_time: Optional[str], tsr_ok: Optional[bool], tsr_msg: Optional[str], computed: str) -> None:
     """Print timestamp and signature verification result for one chain entry."""
     if tsr_time is None:
@@ -706,6 +786,7 @@ def render_pass2(result: dict) -> None:
 
             _print_preimage_annotated(e['preimage'], sha_to_filename)
             _print_hash_comparison(e['computed'], e['manifest_hash'], e['hash_ok'])
+            _print_underlag_checks(e['underlag_checks'])
             _print_tsr(e['tsr_time'], e['tsr_ok'], e['tsr_msg'], e['computed'])
 
     print()
