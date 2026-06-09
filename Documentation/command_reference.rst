@@ -365,6 +365,12 @@ Manage sample vouchers that are sent to Claude with every ``scan`` and
 ``samples.json`` in the same directory as the ledger file and are
 **not year-specific** — they apply to all fiscal years.
 
+Each sample has a ``description`` (treated as a data label for matching) and
+an optional ``notes`` field.  The ``notes`` text is passed to Claude as a
+plain instruction and can contain any per-sample AI guidance, for example
+which VAT rate to apply, how to split a mixed invoice, or a rule that
+overrides the default treatment for that transaction type.
+
 A pre-populated ``samples.json`` with common transaction types for
 Retsina Consulting AB is included with the application.
 
@@ -448,7 +454,7 @@ Delete a sample voucher by ID after confirmation.
            {"account": "3030", "amount": "-10000.00"},
            {"account": "2610", "amount": "-2500.00"}
          ],
-         "notes": "Försäljning av rättigheter med 25% utgående moms."
+         "notes": "Försäljning av rättigheter med 25% utgående moms. Använd alltid konto 2610."
        }
      ]
    }

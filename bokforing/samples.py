@@ -75,11 +75,12 @@ def format_for_ai(samples: list[dict], account_map: dict) -> str:
         return ''
     lines = ['IMPORTANT — Example vouchers saved by the user. When the document matches a sample (same vendor or transaction type), use those exact account numbers. Do not substitute different accounts:']
     for s in samples:
-        notes_suffix = f'  # {s["notes"]}' if s.get('notes') else ''
-        lines.append(f'  {s["description"]}{notes_suffix}')
+        lines.append(f'  <desc>{s["description"]}</desc>')
         for t in s['transactions']:
             acc_obj = account_map.get(t['account'])
             acc_label = acc_obj.label if acc_obj is not None else ''
             lbl = f'  ({t["label"]})' if t.get('label') else ''
             lines.append(f'    {t["account"]}  {str(t["amount"]):>12}  {acc_label}{lbl}')
+        if s.get('notes'):
+            lines.append(f'  Note: {s["notes"]}')
     return '\n'.join(lines)
