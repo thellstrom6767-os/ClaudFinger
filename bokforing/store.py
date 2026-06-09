@@ -396,6 +396,30 @@ def update_chain_tsr(
         conn.close()
 
 
+def get_all_chain_entries(ledger_path: str) -> list[dict]:
+    """Return every chain row as a list of dicts.
+
+    Keys: series (str), number (int), hash (str),
+          tsr_token (bytes|None), tsa_timestamp (str|None).
+    Rows are ordered by (voucher_series, voucher_number).
+    """
+    db_p = db_path(ledger_path)
+    conn = _connect(db_p)
+    try:
+        _create_tables(conn)
+        rows = conn.execute(
+            'SELECT voucher_series, voucher_number, voucher_hash, tsr_token, tsa_timestamp '
+            'FROM chain ORDER BY voucher_series, voucher_number'
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {'series': r[0], 'number': r[1], 'hash': r[2],
+         'tsr_token': r[3], 'tsa_timestamp': r[4]}
+        for r in rows
+    ]
+
+
 def export_sie(ledger_path: str, out_path: str) -> None:
     """Write a SIE 4 .se file and a _underlag/ directory from the DB.
 

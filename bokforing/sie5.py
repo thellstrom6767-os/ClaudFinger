@@ -15,7 +15,9 @@ when restoring a SIE 5 file back to SIE 4 format.
 """
 from __future__ import annotations
 
+import base64
 import io
+import json
 import tempfile
 import os
 import zipfile
@@ -175,6 +177,61 @@ def _build_xml(
     return buf.getvalue()
 
 
+def _build_manifest(ledger_path: str, sie: SIEFile) -> bytes | None:
+    """Build manifest.json content covering the hash chain and underlag hashes.
+
+    Returns None when no chain entries exist (no hashing has been done yet).
+    """
+    from . import store as store_module
+
+    all_entries = store_module.get_all_chain_entries(ledger_path)
+    if not all_entries:
+        return None
+
+    chain_map: dict[tuple[str, int], dict] = {
+        (e['series'], e['number']): e for e in all_entries
+    }
+
+    ib_entry = chain_map.get(('IB', 0))
+    chains: dict[str, list] = {}
+
+    for v in sie.vouchers:
+        entry = chain_map.get((v.series, v.number))
+        if entry is None:
+            continue
+        if v.number == 1:
+            prev = chain_map.get(('IB', 0))
+        else:
+            prev = chain_map.get((v.series, v.number - 1))
+        prev_hash = prev['hash'] if prev else None
+
+        u_hashes = underlag_module.get_underlag_hashes(ledger_path, v.series, v.number)
+
+        voucher_rec: dict = {
+            'number':    v.number,
+            'hash':      entry['hash'],
+            'prev_hash': prev_hash,
+        }
+        if u_hashes:
+            voucher_rec['underlag'] = [
+                {'filename': fn, 'sha256': sha}
+                for fn, sha in sorted(u_hashes.items())
+            ]
+        if entry['tsr_token']:
+            voucher_rec['tsr_base64'] = base64.b64encode(entry['tsr_token']).decode()
+        if entry['tsa_timestamp']:
+            voucher_rec['tsr_time'] = entry['tsa_timestamp']
+
+        chains.setdefault(v.series, []).append(voucher_rec)
+
+    manifest: dict = {
+        'version': 1,
+        'ib': {'hash': ib_entry['hash']} if ib_entry else None,
+        'chains': chains,
+    }
+    return json.dumps(manifest, indent=2, ensure_ascii=False).encode('utf-8')
+
+
 def generate_sie5(
     sie: SIEFile,
     ledger_path: str,
@@ -201,8 +258,12 @@ def generate_sie5(
     # ── build XML then zip ────────────────────────────────────────────────
     xml_bytes = _build_xml(sie, doc_refs, voucher_docs)
 
+    manifest_bytes = _build_manifest(ledger_path, sie)
+
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('sie5.xml', xml_bytes)
+        if manifest_bytes is not None:
+            zf.writestr('manifest.json', manifest_bytes)
         for _doc_id, filename, file_id in doc_entries:
             data = underlag_module.get_data(ledger_path, file_id)
             if data:
@@ -344,26 +405,58 @@ def restore_from_sie5(
 
         # ── Restore underlag ──────────────────────────────────────────────
         n_docs = 0
-        if not voucher_doc_ids or not doc_manifest:
-            return sie, n_docs
+        if voucher_doc_ids and doc_manifest:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for filename in doc_manifest.values():
+                    zip_entry = f'documents/{filename}'
+                    if zip_entry in zip_names:
+                        zf.extract(zip_entry, tmpdir)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Extract all document files once into tmpdir
-            for filename in doc_manifest.values():
-                zip_entry = f'documents/{filename}'
-                if zip_entry in zip_names:
-                    zf.extract(zip_entry, tmpdir)
+                for (series, number), doc_ids in voucher_doc_ids.items():
+                    for doc_id in doc_ids:
+                        filename = doc_manifest.get(doc_id, '')
+                        if not filename:
+                            continue
+                        src = os.path.join(tmpdir, 'documents', filename)
+                        if not os.path.exists(src):
+                            continue
+                        ul.add_file(output_sie4_path, series, number, src)
+                        n_docs += 1
 
-            # Register each document against its voucher in order
-            for (series, number), doc_ids in voucher_doc_ids.items():
-                for doc_id in doc_ids:
-                    filename = doc_manifest.get(doc_id, '')
-                    if not filename:
-                        continue
-                    src = os.path.join(tmpdir, 'documents', filename)
-                    if not os.path.exists(src):
-                        continue
-                    ul.add_file(output_sie4_path, series, number, src)
-                    n_docs += 1
+        # ── Restore chain and TSR from manifest.json ──────────────────────
+        if 'manifest.json' in zip_names:
+            _restore_manifest(
+                zf.read('manifest.json'), output_sie4_path
+            )
 
     return sie, n_docs
+
+
+def _restore_manifest(manifest_bytes: bytes, ledger_path: str) -> None:
+    """Insert chain rows and TSR tokens from a manifest.json blob."""
+    from . import store as store_module
+
+    try:
+        manifest = json.loads(manifest_bytes.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return
+
+    ib = manifest.get('ib')
+    if ib and ib.get('hash'):
+        store_module.insert_chain_entry(ledger_path, 'IB', 0, ib['hash'], replace=True)
+
+    for series, entries in manifest.get('chains', {}).items():
+        for rec in entries:
+            number = rec.get('number')
+            h = rec.get('hash', '')
+            if not (number is not None and h):
+                continue
+            store_module.insert_chain_entry(ledger_path, series, number, h, replace=True)
+            tsr_b64 = rec.get('tsr_base64')
+            tsr_time = rec.get('tsr_time', '')
+            if tsr_b64:
+                try:
+                    tsr_bytes = base64.b64decode(tsr_b64)
+                except Exception:
+                    continue
+                store_module.update_chain_tsr(ledger_path, series, number, tsr_bytes, tsr_time)

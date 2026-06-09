@@ -413,6 +413,7 @@ Archive layout
 
    Retsina_Consulting_AB_2024-01-01_2024-12-31.si5
    ├── sie5.xml
+   ├── manifest.json          ← present only when the hash chain exists
    └── documents/
        ├── Verifikation_A1.pdf
        └── Verifikation_A5[1av2].pdf
@@ -483,6 +484,95 @@ Cost      K      4xxx–8xxx accounts
 Liability S      2100–2999 accounts
 Equity    (none) 2000–2099 accounts
 ========= ====== ================================
+
+``manifest.json`` structure
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``manifest.json`` is written alongside ``sie5.xml`` whenever the ``chain``
+table contains at least one entry (i.e. ``hash`` has been run).  It is a
+UTF-8 JSON file and serves as a self-contained integrity manifest for the
+package: it records the hash chain and underlag hashes so the archive can
+be verified without a live database.
+
+.. code-block:: json
+
+   {
+     "version": 1,
+     "ib": {
+       "hash": "97d92b3fd54cc643…"
+     },
+     "chains": {
+       "A": [
+         {
+           "number": 1,
+           "hash": "22f6e0abe1c602e2…",
+           "prev_hash": "97d92b3fd54cc643…",
+           "underlag": [
+             {
+               "filename": "Verifikation_A1.pdf",
+               "sha256":   "c8f3e431143076…"
+             }
+           ],
+           "tsr_base64": "MIIF…",
+           "tsr_time":   "2026-06-08T15:08:30+00:00"
+         }
+       ],
+       "B": [
+         {
+           "number": 1,
+           "hash": "a8d3a6d02126d2…",
+           "prev_hash": "97d92b3fd54cc643…"
+         }
+       ]
+     }
+   }
+
+**Fields**
+
+``version``
+  Always ``1``.
+
+``ib.hash``
+  SHA-256 hex of the canonical IB preimage (same value as ``chain`` row
+  ``(IB, 0)``).  Present only if the IB root has been hashed.
+
+``chains``
+  Object keyed by series letter (``"A"``, ``"B"``, …).  Each value is an
+  array of hashed vouchers for that series in ascending number order.
+  Vouchers not yet in the chain table are omitted.  Each series is an
+  independent chain rooted at the same IB hash.
+
+  ``number``
+    Voucher number within the series.
+
+  ``hash``
+    SHA-256 hex of this voucher's canonical preimage.
+
+  ``prev_hash``
+    Hash of the immediately preceding chain entry — IB root for voucher
+    number 1, otherwise the previous voucher in the same series.  Allows
+    the chain to be verified entry-by-entry without querying the database.
+
+  ``underlag``
+    List of ``{filename, sha256}`` objects, sorted by filename (the same
+    order used in the canonical preimage UNDERLAG section).  Present only
+    when the voucher has attached files.  The ``sha256`` is the digest of
+    the original, decompressed document data.
+
+  ``tsr_base64``
+    RFC 3161 ``TimeStampResponse`` DER blob, base64-encoded.  Present only
+    when ``lock`` has been run for this voucher.
+
+  ``tsr_time``
+    UTC ISO 8601 timestamp extracted from the TSR.  Present together with
+    ``tsr_base64``.
+
+**Restore behaviour**
+
+``sie5import`` reads ``manifest.json`` when it is present and inserts all
+chain entries (IB and vouchers) into the restored ``chain`` table, including
+TSR blobs.  A package restored from ``sie5import`` is therefore fully
+re-verifiable with ``verify --tsr`` without any additional steps.
 
 **Round-trip limitations**
 

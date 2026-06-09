@@ -1509,6 +1509,7 @@ that has been attached to vouchers.
 
    CompanyName_2024-01-01_2024-12-31.si5  (zip)
    ├── sie5.xml
+   ├── manifest.json          ← included when the hash chain exists
    └── documents/
        ├── Verifikation_A1.pdf
        ├── Verifikation_A5[1av2].pdf
@@ -1524,6 +1525,13 @@ The XML uses the ``http://www.sie.se/sie5`` namespace and contains:
 * ``Documents`` — manifest of attached files with content types
 
 Vouchers without underlag have no ``DocumentReference`` elements.
+
+``manifest.json`` is written when at least one chain entry exists.  It
+records the SHA-256 hash chain (IB root and per-voucher hashes with their
+``prev_hash`` links), the SHA-256 of every attached underlag file, and any
+RFC 3161 TSR blobs from ``lock``.  The package can be verified after a
+``sie5import`` with ``verify --tsr`` without any additional steps.  See
+:doc:`storage_format` for the full JSON schema.
 
 .. code-block:: bash
 
@@ -1563,6 +1571,8 @@ Closing balances (#UB)   ✓
 Vouchers — all fields    ✓
 Transactions             ✓
 Underlag files           ✓ (extracted and re-registered in SQLite)
+Hash chain entries       ✓ (from ``manifest.json``, when present)
+RFC 3161 TSR tokens      ✓ (from ``manifest.json``, when present)
 SRU codes                ✗ (not carried in SIE 5)
 ======================== =====
 
