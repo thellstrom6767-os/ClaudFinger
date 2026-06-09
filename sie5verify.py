@@ -473,39 +473,84 @@ def _parse_first_cert(text: str) -> dict:
     return info
 
 
+def _parse_stamped_hash(ts_text: str) -> Optional[str]:
+    """Extract the messageImprint hash hex from ``openssl ts -reply -text`` output.
+
+    The TSTInfo block contains a hex dump of the hash that the TSA signed:
+
+        Message data:
+            0000 - 63:53:f9:69:0c:de:5c:fe-fb:0e:b7:3a:8e:82:5a:94-
+            0010 - 7a:bf:97:fc:bf:7c:14:bb-98:e8:18:85:62:72:65:98-
+
+    Each data line starts with a hex offset followed by `` - ``.  All
+    hexadecimal characters after that separator are concatenated to form the
+    full hash string, ignoring colons and dashes used as visual separators.
+    """
+    in_block = False
+    hex_chars: list[str] = []
+    for line in ts_text.splitlines():
+        s = line.strip()
+        if s.startswith('Message data:'):
+            in_block = True
+            continue
+        if in_block:
+            # Data lines: "XXXX - xx:xx:xx..."
+            if s and s[0] in '0123456789abcdefABCDEF' and ' - ' in s:
+                after = s.split(' - ', 1)[1]
+                hex_chars.extend(c for c in after if c in '0123456789abcdef')
+            else:
+                break   # first non-data line ends the block
+    return ''.join(hex_chars) if hex_chars else None
+
+
 def extract_tsr_details(tsr_bytes: bytes) -> dict:
-    """Extract signing-certificate details from an RFC 3161 TSR blob.
+    """Extract the stamped hash and signing-certificate details from an RFC 3161 TSR.
 
-    Two-step openssl pipeline:
-      1. ``openssl ts -reply -token_out`` — strips the TSR wrapper and outputs
+    Three openssl operations are run against the same temp file:
+
+      1. ``openssl ts -reply -text`` — prints TSTInfo in human-readable form;
+         the ``Message data:`` hex dump is the messageImprint (stamped hash).
+      2. ``openssl ts -reply -token_out`` — unwraps the TSR envelope and emits
          the raw CMS/PKCS#7 token on stdout.
-      2. ``openssl pkcs7 -inform DER -print_certs -text -noout`` — lists every
-         certificate embedded in the token; the first is the TSA leaf cert.
+      3. ``openssl pkcs7 -print_certs -text -noout`` — lists the certificates
+         embedded in the token; the first is the TSA leaf (signing) cert.
 
-    The leaf cert's Subject, Issuer, and validity window are returned so the
-    verifier can display who issued the timestamp and whether the cert was
-    within its validity period at stamp time.
-
-    Returns a dict with string keys subject, issuer, not_before, not_after.
-    Any field may be absent if openssl is not on PATH or parsing fails.
+    Returned dict keys (all str; absent when openssl is unavailable or parsing fails):
+        stamped_hash   hex string of the messageImprint extracted from the TSR
+        subject        Subject DN of the TSA leaf certificate
+        issuer         Issuer DN
+        not_before     Validity start as printed by openssl
+        not_after      Validity end
     """
     with tempfile.NamedTemporaryFile(suffix='.tsr', delete=False) as f:
         f.write(tsr_bytes)
         tsr_path = f.name
     try:
-        # Step 1 — extract the raw CMS token from the TSR envelope
+        info: dict = {}
+
+        # Step 1 — messageImprint (stamped hash) from TSTInfo text
+        r_text = subprocess.run(
+            ['openssl', 'ts', '-reply', '-in', tsr_path, '-text'],
+            capture_output=True, text=True,
+        )
+        stamped = _parse_stamped_hash(r_text.stdout)
+        if stamped:
+            info['stamped_hash'] = stamped
+
+        # Step 2 — raw CMS token
         r1 = subprocess.run(
             ['openssl', 'ts', '-reply', '-in', tsr_path, '-token_out'],
             capture_output=True,
         )
-        if r1.returncode != 0 or not r1.stdout:
-            return {}
-        # Step 2 — list the embedded certificates
-        r2 = subprocess.run(
-            ['openssl', 'pkcs7', '-inform', 'DER', '-print_certs', '-text', '-noout'],
-            input=r1.stdout, capture_output=True,
-        )
-        return _parse_first_cert(r2.stdout.decode('utf-8', errors='replace'))
+        if r1.returncode == 0 and r1.stdout:
+            # Step 3 — certificate details from the token
+            r2 = subprocess.run(
+                ['openssl', 'pkcs7', '-inform', 'DER', '-print_certs', '-text', '-noout'],
+                input=r1.stdout, capture_output=True,
+            )
+            info.update(_parse_first_cert(r2.stdout.decode('utf-8', errors='replace')))
+
+        return info
     except FileNotFoundError:
         return {}
     finally:
@@ -878,9 +923,11 @@ def _print_tsr(
         return
     sig_display = tsr_msg or ''
     print(f'  Locked here:          {tsr_time}  {_tick(tsr_ok)}  {sig_display}')
-    # Show which hash the TSR was checked against so the reader can confirm
-    # we used the independently computed hash, not the manifest hash
-    print(f'  Timestamp covers:     {computed[:32]}…  (independently computed hash)')
+    stamped = tsr_info.get('stamped_hash', '')
+    if stamped:
+        print(f'  TSA stamped hash:     {stamped[:32]}…  (extracted from TSR)')
+    else:
+        print(f'  TSA stamped hash:     (could not extract from TSR)')
     if tsr_info.get('subject'):
         print(f'  TSA subject:          {tsr_info["subject"]}')
     if tsr_info.get('issuer'):
