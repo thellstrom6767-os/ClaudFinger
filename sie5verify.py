@@ -504,7 +504,15 @@ def compute_verification(
     ib      dict    IB result — see keys below
     series  dict    series_id → list of voucher result dicts
 
-    IB result keys:   preimage, computed, manifest_hash, ok
+    IB result keys:
+        preimage      canonical preimage string
+        computed      str   SHA-256 of preimage
+        manifest_hash str | None
+        ok            bool
+        covered_by    list[{series, number, tsr_time, tsr_ok}]
+                      every series' first lock point (all cover IB because IB
+                      is the root of every chain)
+
     Voucher result keys:
         voucher          original dict from parse_sie5_xml
         preimage         canonical preimage string
@@ -517,6 +525,10 @@ def compute_verification(
         tsr_time         str | None
         tsr_ok           bool | None  (None = no TSR present)
         tsr_msg          str | None
+        covered_by       {series, number, tsr_time, tsr_ok} | None
+                         earliest lock in the same series that covers this entry
+                         (the first entry at index >= this one that has a TSR);
+                         None if the entry and all subsequent entries are unlocked
     """
     ib_preimage = canonical_ib_text(ledger['year_begins'], ledger['ib'])
     ib_computed = hashlib.sha256(ib_preimage.encode('utf-8')).hexdigest()
@@ -597,6 +609,36 @@ def compute_verification(
 
         result['series'][series_id] = series_results
 
+    # Post-pass: annotate each voucher with the earliest lock that covers it.
+    # Because the chain is sequential, the TSR at position N covers entries 1..N.
+    # We walk forward from each entry to find the first TSR at index >= its own.
+    for series_id, entries in result['series'].items():
+        for i, e in enumerate(entries):
+            e['covered_by'] = None
+            for future_e in entries[i:]:
+                if future_e['tsr_time']:
+                    v = future_e['voucher']
+                    e['covered_by'] = {
+                        'series':   series_id,
+                        'number':   v['number'],
+                        'tsr_time': future_e['tsr_time'],
+                        'tsr_ok':   future_e['tsr_ok'],
+                    }
+                    break
+
+    # IB is covered by the first lock in every series (each chain roots at IB).
+    result['ib']['covered_by'] = []
+    for series_id, entries in result['series'].items():
+        for e in entries:
+            if e['tsr_time']:
+                result['ib']['covered_by'].append({
+                    'series':   series_id,
+                    'number':   e['voucher']['number'],
+                    'tsr_time': e['tsr_time'],
+                    'tsr_ok':   e['tsr_ok'],
+                })
+                break
+
     return result
 
 
@@ -643,20 +685,16 @@ def render_pass1(result: dict) -> None:
         tsr_failures      = [e for e in entries if e['tsr_ok'] is False]
         series_ok         = not hash_failures and not underlag_failures and not tsr_failures
 
-        # Tail TSR info (the last entry that has a timestamp)
-        tail_tsr_time = next(
-            (e['tsr_time'] for e in reversed(entries) if e['tsr_time']), None
-        )
-        tail_tsr_ok = next(
-            (e['tsr_ok'] for e in reversed(entries) if e['tsr_time']), None
-        )
-
+        # TSR lock-point summary — only shown on a fully-passing series so the
+        # "locked" note is never displayed alongside a failure message.
+        tsr_entries = [e for e in entries if e['tsr_time']]
         tsr_note = ''
-        if tail_tsr_time:
-            if tail_tsr_ok is True:
-                tsr_note = f'  locked {tail_tsr_time}'
+        if series_ok and tsr_entries:
+            tail_time = tsr_entries[-1]['tsr_time']
+            if len(tsr_entries) == 1:
+                tsr_note = f'  locked {tail_time}'
             else:
-                tsr_note = _red('  TSR INVALID at tail')
+                tsr_note = f'  {len(tsr_entries)} timestamps, last locked {tail_time}'
 
         if series_ok:
             status = _green('✓')
@@ -746,15 +784,26 @@ def _print_underlag_checks(checks: list[dict]) -> None:
 
 
 def _print_tsr(tsr_time: Optional[str], tsr_ok: Optional[bool], tsr_msg: Optional[str], computed: str) -> None:
-    """Print timestamp and signature verification result for one chain entry."""
+    """Print the lock-point timestamp for an entry that carries its own TSR."""
     if tsr_time is None:
         return
-    time_display = tsr_time or '(unknown)'
-    sig_display  = tsr_msg or ''
-    print(f'  Timestamp:            {time_display}  {_tick(tsr_ok)}  {sig_display}')
+    sig_display = tsr_msg or ''
+    print(f'  Locked here:          {tsr_time}  {_tick(tsr_ok)}  {sig_display}')
     # Show which hash the TSR was checked against so the reader can confirm
     # we used the independently computed hash, not the manifest hash
     print(f'  Timestamp covers:     {computed[:32]}…  (independently computed hash)')
+
+
+def _print_covered_by(covered_by_list: list[dict]) -> None:
+    """Print one coverage line per lock that protects this chain entry.
+
+    An entry without its own TSR is covered by the earliest subsequent lock in
+    the same series.  IB is covered by all series' first locks.  Each line shows
+    where the covering TSR lives (series:number) and its timestamp.
+    """
+    for cb in covered_by_list:
+        ref = f'{cb["series"]}:{cb["number"]}'
+        print(f'  Covered by lock:      {ref}  {cb["tsr_time"]}  {_tick(cb["tsr_ok"])}')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -770,6 +819,7 @@ def render_pass2(result: dict) -> None:
     ib = result['ib']
     _print_preimage_annotated(ib['preimage'], {})
     _print_hash_comparison(ib['computed'], ib['manifest_hash'], ib['ok'])
+    _print_covered_by(ib.get('covered_by', []))
 
     # ── Per-series vouchers ───────────────────────────────────────────────────
     for series_id, entries in sorted(result['series'].items()):
@@ -788,6 +838,8 @@ def render_pass2(result: dict) -> None:
             _print_hash_comparison(e['computed'], e['manifest_hash'], e['hash_ok'])
             _print_underlag_checks(e['underlag_checks'])
             _print_tsr(e['tsr_time'], e['tsr_ok'], e['tsr_msg'], e['computed'])
+            if e['tsr_time'] is None:
+                _print_covered_by([e['covered_by']] if e['covered_by'] else [])
 
     print()
 
