@@ -431,8 +431,86 @@ def check_underlag_vs_manifest(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RFC 3161 TSR verification
+# RFC 3161 TSR verification and certificate detail extraction
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_first_cert(text: str) -> dict:
+    """Parse the first X.509 block from ``openssl pkcs7 -text`` output.
+
+    OpenSSL formats the same field differently depending on version and flags:
+      - ``subject=C = US, O = ...``  (one-liner outside the cert block)
+      - ``Subject: C=US, O=...``     (indented inside the Certificate block)
+
+    Both are handled.  The first occurrence of each field wins, so we always
+    capture the leaf (signing) certificate rather than a CA in the chain.
+
+    Returned keys (all str; absent when not found):
+        subject     Subject DN of the TSA leaf certificate
+        issuer      Issuer DN
+        not_before  Validity start as printed by openssl
+        not_after   Validity end
+    """
+    info: dict[str, str] = {}
+    for line in text.splitlines():
+        s = line.strip()
+        # subject — either "subject=..." (one-liner) or "Subject: ..." (in cert block)
+        if s.startswith('subject=') and 'subject' not in info:
+            info['subject'] = s[len('subject='):].strip()
+        elif s.startswith('Subject:') and 'subject' not in info:
+            info['subject'] = s[len('Subject:'):].strip()
+        # issuer
+        elif s.startswith('issuer=') and 'issuer' not in info:
+            info['issuer'] = s[len('issuer='):].strip()
+        elif s.startswith('Issuer:') and 'issuer' not in info:
+            info['issuer'] = s[len('Issuer:'):].strip()
+        # validity
+        elif s.startswith('Not Before:') and 'not_before' not in info:
+            info['not_before'] = s.split(':', 1)[1].strip()
+        elif s.startswith('Not After :') and 'not_after' not in info:
+            info['not_after'] = s.split(':', 1)[1].strip()
+        if len(info) == 4:
+            break
+    return info
+
+
+def extract_tsr_details(tsr_bytes: bytes) -> dict:
+    """Extract signing-certificate details from an RFC 3161 TSR blob.
+
+    Two-step openssl pipeline:
+      1. ``openssl ts -reply -token_out`` — strips the TSR wrapper and outputs
+         the raw CMS/PKCS#7 token on stdout.
+      2. ``openssl pkcs7 -inform DER -print_certs -text -noout`` — lists every
+         certificate embedded in the token; the first is the TSA leaf cert.
+
+    The leaf cert's Subject, Issuer, and validity window are returned so the
+    verifier can display who issued the timestamp and whether the cert was
+    within its validity period at stamp time.
+
+    Returns a dict with string keys subject, issuer, not_before, not_after.
+    Any field may be absent if openssl is not on PATH or parsing fails.
+    """
+    with tempfile.NamedTemporaryFile(suffix='.tsr', delete=False) as f:
+        f.write(tsr_bytes)
+        tsr_path = f.name
+    try:
+        # Step 1 — extract the raw CMS token from the TSR envelope
+        r1 = subprocess.run(
+            ['openssl', 'ts', '-reply', '-in', tsr_path, '-token_out'],
+            capture_output=True,
+        )
+        if r1.returncode != 0 or not r1.stdout:
+            return {}
+        # Step 2 — list the embedded certificates
+        r2 = subprocess.run(
+            ['openssl', 'pkcs7', '-inform', 'DER', '-print_certs', '-text', '-noout'],
+            input=r1.stdout, capture_output=True,
+        )
+        return _parse_first_cert(r2.stdout.decode('utf-8', errors='replace'))
+    except FileNotFoundError:
+        return {}
+    finally:
+        os.unlink(tsr_path)
+
 
 def verify_tsr(
     tsr_bytes: bytes,
@@ -525,6 +603,8 @@ def compute_verification(
         tsr_time         str | None
         tsr_ok           bool | None  (None = no TSR present)
         tsr_msg          str | None
+        tsr_info         dict   TSA cert details: subject, issuer, not_before, not_after
+                                (empty dict when no TSR or openssl unavailable)
         covered_by       {series, number, tsr_time, tsr_ok} | None
                          earliest lock in the same series that covers this entry
                          (the first entry at index >= this one that has a TSR);
@@ -581,6 +661,7 @@ def compute_verification(
             tsr_ok   = None
             tsr_time = None
             tsr_msg  = None
+            tsr_info: dict = {}
             if mentry and mentry.get('tsr_base64'):
                 tsr_time = mentry.get('tsr_time')
                 try:
@@ -590,6 +671,7 @@ def compute_verification(
                     tsr_msg = f'cannot decode tsr_base64: {exc}'
                 else:
                     tsr_ok, tsr_msg = verify_tsr(tsr_bytes, computed, ca_bundle)
+                    tsr_info = extract_tsr_details(tsr_bytes)
 
             series_results.append({
                 'voucher':          v,
@@ -603,6 +685,7 @@ def compute_verification(
                 'tsr_time':         tsr_time,
                 'tsr_ok':           tsr_ok,
                 'tsr_msg':          tsr_msg,
+                'tsr_info':         tsr_info,
             })
 
             prev_hash = computed   # advance the chain regardless of match status
@@ -783,8 +866,14 @@ def _print_underlag_checks(checks: list[dict]) -> None:
                 print(f'         manifest:  {mani}')
 
 
-def _print_tsr(tsr_time: Optional[str], tsr_ok: Optional[bool], tsr_msg: Optional[str], computed: str) -> None:
-    """Print the lock-point timestamp for an entry that carries its own TSR."""
+def _print_tsr(
+    tsr_time: Optional[str],
+    tsr_ok: Optional[bool],
+    tsr_msg: Optional[str],
+    computed: str,
+    tsr_info: dict,
+) -> None:
+    """Print the lock-point timestamp and TSA certificate details for one entry."""
     if tsr_time is None:
         return
     sig_display = tsr_msg or ''
@@ -792,6 +881,12 @@ def _print_tsr(tsr_time: Optional[str], tsr_ok: Optional[bool], tsr_msg: Optiona
     # Show which hash the TSR was checked against so the reader can confirm
     # we used the independently computed hash, not the manifest hash
     print(f'  Timestamp covers:     {computed[:32]}…  (independently computed hash)')
+    if tsr_info.get('subject'):
+        print(f'  TSA subject:          {tsr_info["subject"]}')
+    if tsr_info.get('issuer'):
+        print(f'  TSA issuer:           {tsr_info["issuer"]}')
+    if tsr_info.get('not_before') and tsr_info.get('not_after'):
+        print(f'  TSA cert valid:       {tsr_info["not_before"]}  –  {tsr_info["not_after"]}')
 
 
 def _print_covered_by(covered_by_list: list[dict]) -> None:
@@ -837,7 +932,7 @@ def render_pass2(result: dict) -> None:
             _print_preimage_annotated(e['preimage'], sha_to_filename)
             _print_hash_comparison(e['computed'], e['manifest_hash'], e['hash_ok'])
             _print_underlag_checks(e['underlag_checks'])
-            _print_tsr(e['tsr_time'], e['tsr_ok'], e['tsr_msg'], e['computed'])
+            _print_tsr(e['tsr_time'], e['tsr_ok'], e['tsr_msg'], e['computed'], e.get('tsr_info', {}))
             if e['tsr_time'] is None:
                 _print_covered_by([e['covered_by']] if e['covered_by'] else [])
 
